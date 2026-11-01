@@ -1,0 +1,55 @@
+name: ETH3D dataset preparation (CPU smoke)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/download_eth3d.py'
+      - 'tests/test_eth3d.py'
+      - '.github/workflows/eth3d-data.yml'
+      - 'scripts/common.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and test CLI and split logic (no GPU / no network)
+        run: |
+          python3 -m compileall -q scripts/download_eth3d.py tests/test_eth3d.py
+          python3 -m unittest discover -s tests -v
+          python3 scripts/download_eth3d.py --scenes pipes relief kicker --dry-run
+          python3 scripts/doctor.py
+
+  public-archive-smoke:
+    runs-on: ubuntu-latest
+    needs: offline
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install 7zip
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq p7zip-full
+      - name: Download and validate the smallest real ETH3D image + geometry archives
+        run: |
+          python3 scripts/download_eth3d.py --scenes pipes --max-download-gib 1.0 --delete-archives
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          root=Path("data/scenes/eth3d_pipes")
+          m=json.loads((root/"dataset_manifest.json").read_text())
+          train=set(m["split"]["train"]); test=set(m["split"]["test"])
+          assert len(train)+len(test)==14, (len(train),len(test))
+          assert train.isdisjoint(test)
+          assert {p.name for p in (root/"images").iterdir()}==train
+          assert {p.name for p in (root/"heldout"/"images").iterdir()}==test
+          assert list((root/"ground_truth"/"scan_eval").glob("*.ply"))
+          assert (root/"ground_truth"/"calibration"/"images.txt").exists()
+          print("ETH3D real-data smoke passed:",len(train),"train",len(test),"test")
+          PY
