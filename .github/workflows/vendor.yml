@@ -1,0 +1,43 @@
+name: Vendor pinned reconstruction sources
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/vendor.yml'
+      - 'scripts/vendor_sources.py'
+      - 'configs/upstreams.json'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  vendor:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Clone and copy pinned upstream implementation
+        run: python3 scripts/vendor_sources.py
+      - name: CPU-only source/interface validation
+        run: |
+          python3 -m compileall -q vggt/vggt 3dgs/gsplat 3dgs/examples 2dsugar/sugar_scene 2dsugar/sugar_trainers 2dsugar/gaussian_splatting_2d
+          python3 -m unittest discover -s tests -v
+          bash -n scripts/install_envs.sh
+          bash -n scripts/run_all.sh
+          python3 scripts/doctor.py
+      - name: Commit vendored code
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add vggt 3dgs 2dsugar configs/vendored_manifest.json
+          if git diff --cached --quiet; then
+            echo "Vendored sources unchanged"
+          else
+            git commit -m "Vendor pinned VGGT, gsplat and 2D-SuGaR runtime sources"
+            git push origin HEAD:main
+          fi
