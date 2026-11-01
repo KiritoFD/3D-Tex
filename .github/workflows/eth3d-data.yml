@@ -36,20 +36,27 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq p7zip-full
-      - name: Download and validate the smallest real ETH3D image + geometry archives
+      - name: Download and validate all three selected ETH3D image + geometry archives
         run: |
-          python3 scripts/download_eth3d.py --scenes pipes --max-download-gib 1.0 --delete-archives
+          python3 scripts/download_eth3d.py --scenes pipes relief kicker --max-download-gib 3.0 --delete-archives
           python3 - <<'PY'
           import json
           from pathlib import Path
-          root=Path("data/scenes/eth3d_pipes")
-          m=json.loads((root/"dataset_manifest.json").read_text())
-          train=set(m["split"]["train"]); test=set(m["split"]["test"])
-          assert len(train)+len(test)==14, (len(train),len(test))
-          assert train.isdisjoint(test)
-          assert {p.name for p in (root/"images").iterdir()}==train
-          assert {p.name for p in (root/"heldout"/"images").iterdir()}==test
-          assert list((root/"ground_truth"/"scan_eval").glob("*.ply"))
-          assert (root/"ground_truth"/"calibration"/"images.txt").exists()
-          print("ETH3D real-data smoke passed:",len(train),"train",len(test),"test")
+          expected={'pipes':(12,2),'relief':(25,6),'kicker':(25,6)}
+          total_size=0
+          for name,(ntrain,ntest) in expected.items():
+              root=Path('data/scenes')/('eth3d_'+name)
+              m=json.loads((root/'dataset_manifest.json').read_text())
+              train=set(m['split']['train']); test=set(m['split']['test'])
+              assert (len(train),len(test))==(ntrain,ntest), (name,len(train),len(test))
+              assert train.isdisjoint(test)
+              assert {p.name for p in (root/'images').iterdir()}==train
+              assert {p.name for p in (root/'heldout'/'images').iterdir()}==test
+              assert list((root/'ground_truth'/'scan_eval').glob('*.ply'))
+              assert (root/'ground_truth'/'calibration'/'images.txt').exists()
+              size=sum(p.stat().st_size for p in root.rglob('*') if p.is_file())
+              total_size+=size
+              print(name, 'train',ntrain,'test',ntest,'unpacked bytes',size)
+          assert total_size < 10*1024**3, total_size
+          print('ETH3D 3-scene real-data smoke passed, unpacked GiB:',round(total_size/1024**3,3))
           PY
