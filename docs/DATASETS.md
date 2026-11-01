@@ -8,7 +8,7 @@
 | relief | 31 | 0.3 GB | 0.2 GB |
 | kicker | 31 | 0.4 GB | 0.2 GB |
 
-Total **~1.3 GB compressed**, using official rounded sizes. The downloader limits aggregate cached archives to **3 GiB** by default. Raw archives, their expanded temporary files and working copies are different disk consumers; the selected subset is well below the requested 10GB dataset target under normal extraction. Model weights/checkpoints are not part of dataset size.
+Total **~1.3 GB compressed** by official rounded sizes. **Verified GitHub Actions download:** ~1.254 GiB compressed; **1.901 GiB extracted scene data**, excluding temporary archives and CUDA/model dependencies. Actual images/heldout/GT: pipes **12/2/1 PLY**; relief **25/6/2 PLY**; kicker **25/6/2 PLY**. The downloader limits aggregate cached archives to **3 GiB** by default. Raw archives, their expanded temporary files and working copies are different disk consumers; the selected subset is well below the requested 10GB dataset target under normal extraction. Model weights/checkpoints are not part of dataset size.
 
 Official source: https://www.eth3d.net/datasets
 Official camera/GT format: https://www.eth3d.net/documentation
