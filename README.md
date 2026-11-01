@@ -31,7 +31,19 @@ python3 scripts/doctor.py
 
 The three isolated Conda environments intentionally retain different upstream PyTorch/CUDA dependencies. For 2D-SuGaR, a compatible CUDA toolkit / compiler is required to build the vendored kernels. CUDA training has **not** been tested in the CPU-only preparation environment.
 
-### Tiny data and two independent reconstruction branches
+### Reproducible validation set (ETH3D, ~1.3 GB compressed)
+
+The default benchmark uses **pipes (14 views), relief (31), and kicker (31)**, with official undistorted photos, camera calibration and laser-scan evaluation ground truth. A deterministic heldout split is created **before VGGT**, so heldout views are not used as reconstruction input.
+
+    sudo apt-get install p7zip-full
+    python3 scripts/download_eth3d.py --scenes pipes relief kicker
+    python3 scripts/run_vggt.py --scene eth3d_pipes --ba
+    python3 scripts/run_3dgs.py --scene eth3d_pipes --steps 7000 --data-factor 4
+    python3 scripts/run_2dsugar.py --scene eth3d_pipes --iterations 7000 --refine-iterations 2000 --resolution 4
+
+Use `python3 scripts/download_eth3d.py --dry-run` to preview official archive URLs. Full instructions, expected sizes, dataset provenance, and evaluation caveats are in [docs/DATASETS.md](docs/DATASETS.md).
+
+### Tiny sample-only data and two independent reconstruction branches
 
 ```bash
 # Fetch sample photos only; no training data or pretrained models checked into Git.
