@@ -1,78 +1,59 @@
 # 3D-Tex
 
-**Static-scene capture -> VGGT cameras/points -> 3DGS rendering + 2D-SuGaR mesh/UV.**
+**Research goal: multi-view RGB → VGGT-Ω cameras/depth → surface Mesh → UV atlas → faithful textures (optional PBR). No 3D Gaussian stage.**
 
-This repository contains **selected, vendored upstream source code** under three peer directories. There are **no Git submodules** and no generalization training. Each scene is optimized independently.
+> **Status:** Architecture and literature survey updated 2026-11-01. The **new mesh/UV end-to-end implementation is NOT present yet**. The current `vggt/` is the pinned **original VGGT** (not VGGT-Ω); the `2dsugar/` source is a retained, optional historical reference, **not used in the new main pipeline**. The old standalone `3dgs/` vendored code and runner have been removed.
+
+## Technical design & papers
+
+- **[Mesh + UV implementation plan](docs/MESH_UV_PIPELINE.md)** — all stage contracts; robust depth fusion / TSDF / topology optimization / xatlas / visibility-aware texture baking / seam loss, tests and GPU gates.
+- **[2025–2026 SOTA comparison](docs/SOTA_2026.md)** — verified authors, institutions, venues, geometric/rendering/texturing results, code status, honest limitations.
+- **[VGGT-Ω adapter](docs/VGGT_OMEGA_ADAPTER.md)** — model API, lack of point-map head, K/pose/depth alignment, checkpoint version and RAM/VRAM budgets.
+- **[No-Gaussian decision](docs/DECISION_NO_GAUSSIANS.md)** — why and what was removed.
+- **[Direct UV VAE roadmap](docs/DIRECT_UV.md)** — follows a stable UV carrier.
+- **[Paper index and PDF downloader](docs/papers/README.md)**.
+
+### Proposed stages (not currently runnable)
 
 ```text
-3D-Tex/
-├── vggt/                    # VGGT inference + COLMAP exporter
-├── 3dgs/                    # gsplat rendering core + COLMAP trainer
-├── 2dsugar/                 # 2DGS, SuGaR and required CUDA extensions
-├── scripts/                 # unified setup / scene preparation / run scripts
-├── configs/upstreams.json   # pinned upstream commits
-├── configs/vendored_manifest.json  # source provenance (after vendoring)
-├── tests/                   # CPU-only data/CLI tests
-├── data/scenes/<scene>/images/
-├── outputs/
-└── docs/
+RGB train images
+  └─ VGGT-Ω [NOT YET PORTED] ──> intrinsics/extrinsics + depth + confidence
+        └─ multiview consistency + TSDF [PLANNED]
+              ├─ baseline mesh -> xatlas -> texture baking [PLANNED]
+              ├─ adapted ExMesh mesh/UV optimizer [PLANNED, not upstream default]
+              └─ GeoSVR sparse voxel geometry baseline [PLANNED]
+                                     └─ fixed Mesh + UV -> texture blending/repair/PBR [PLANNED]
 ```
 
-### Initial setup (Linux, CUDA GPU; single RTX 4090 is sufficient for small scenes)
+No part of the above requires 3DGS or 2DGS, but the ExMesh **official** upstream implementation obtains its initial mesh from PGSR; replacing this with our VGGT-Ω/TSDF mesh is an unverified integration experiment.
 
-Source files are committed to this repository; cloning **does not** download upstream repos or datasets.
+## What is actually available now
 
-```bash
-git clone https://github.com/KiritoFD/3D-Tex.git
-cd 3D-Tex
-bash scripts/install_envs.sh all
-python3 scripts/doctor.py
+```text
+vggt/           pinned original VGGT inference + COLMAP exporter
+2dsugar/        legacy optional 2DGS/SuGaR research source (not mainline)
+scripts/        ETH3D downloader, current VGGT wrapper, paper downloader
+tests/          CPU dataset, HTTP, and original-VGGT/COLMAP wiring regression tests
+docs/           architecture, method review, implementation roadmap
+data/           Git-ignored input data
+outputs/        Git-ignored outputs
 ```
 
-The three isolated Conda environments intentionally retain different upstream PyTorch/CUDA dependencies. For 2D-SuGaR, a compatible CUDA toolkit / compiler is required to build the vendored kernels. CUDA training has **not** been tested in the CPU-only preparation environment.
-
-### Reproducible validation set (ETH3D, ~1.3 GB compressed)
-
-The default benchmark uses **pipes (14 views), relief (31), and kicker (31)**, with official undistorted photos, camera calibration and laser-scan evaluation ground truth. A deterministic heldout split is created **before VGGT**, so heldout views are not used as reconstruction input.
-
-    sudo apt-get install p7zip-full
-    python3 scripts/download_eth3d.py --scenes pipes relief kicker
-    python3 scripts/run_vggt.py --scene eth3d_pipes --ba
-    python3 scripts/run_3dgs.py --scene eth3d_pipes --steps 7000 --data-factor 4
-    python3 scripts/run_2dsugar.py --scene eth3d_pipes --iterations 7000 --refine-iterations 2000 --resolution 4
-
-Use `python3 scripts/download_eth3d.py --dry-run` to preview official archive URLs. Full instructions, expected sizes, dataset provenance, and evaluation caveats are in [docs/DATASETS.md](docs/DATASETS.md).
-
-### Tiny sample-only data and two independent reconstruction branches
+### CPU test/data preparation
 
 ```bash
-# Fetch sample photos only; no training data or pretrained models checked into Git.
-python3 scripts/get_samples.py --scenes fern flower
-python3 scripts/run_vggt.py --scene fern --ba
-python3 scripts/run_3dgs.py --scene fern --steps 7000
-python3 scripts/run_2dsugar.py --scene fern --iterations 7000 --refine-iterations 2000
-```
-
-VGGT's pretrained weights are downloaded by Hugging Face at first inference; `--ba` additionally downloads VGGSfM / tracking weights. All data and model outputs remain Git-ignored.
-
-**Unified interface:** VGGT writes `data/scenes/<scene>/sparse/` (COLMAP). The adapter mirrors its files into `sparse/0/` for 2D-SuGaR without changing cameras or point coordinates. Both branches consume the same geometry and input images.
-
-The no-prior 2D-SuGaR path is used for the first comparison. The paper's Metric3D depth/normal prior is available with `--priors metric3d`, but mixes an additional pretrained geometry model into the comparison and requires PNG inputs.
-
-### Validation and evaluation scope
-
-```bash
+git clone https://github.com/KiritoFD/3D-Tex.git && cd 3D-Tex
 python3 -m unittest discover -s tests -v
 python3 scripts/doctor.py
-python3 scripts/run_vggt.py --help
-python3 scripts/run_3dgs.py --help
-python3 scripts/run_2dsugar.py --help
+python3 scripts/download_eth3d.py --dry-run
+python3 scripts/download_papers.py --list
+
+# optional real ETH3D images + scans (p7zip required, no GPU)
+python3 scripts/download_eth3d.py --scenes pipes
 ```
 
-**Do not report the tiny sample PSNR as a leak-free new-view benchmark.** The initial VGGT estimate sees the provided sample photos. For controlled benchmarks later, split views *before* reconstruction, or use independently calibrated test cameras and DTU geometry GT. See `docs/EVALUATION.md`.
+The official ETH3D three-scene image/laser download and extraction was previously verified on GitHub Actions (~1.254 GiB compressed / ~1.901 GiB extracted). Those data checks do **not** establish a trained VGGT-Ω or Mesh/UV reconstruction pipeline.
 
-### Vendoring / updating
+The original `scripts/run_vggt.py` still invokes original VGGT (CUDA expected). **`scripts/run_all.sh` intentionally refuses to run** until the newly specified no-Gaussian integration is implemented. Do not publish synthetic wrapper results as geometric/texture performance.
 
-`scripts/vendor_sources.py` clones the three pinned repos in a temporary directory, retains the code paths needed by this pipeline, vendors the two Gaussian rasterizers + simple-knn code, and records a source manifest. It **does not** retain their Git history, images, docs, demo UI, training datasets or model weights. The GitHub Actions source-vendoring workflow performs this once when configured; rerun manually only when updating pinned upstream commits. See `docs/UPSTREAMS.md`.
-
-Upstream copyrights and licenses are preserved in the corresponding directories; third-party weights and code may have separate usage terms.
+See [docs/DATASETS.md](docs/DATASETS.md), [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md), [docs/UPSTREAMS.md](docs/UPSTREAMS.md) for data/license/dependency boundaries.

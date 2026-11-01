@@ -1,38 +1,24 @@
-# 3D-Tex documentation
+# 3D-Tex research and implementation notes
 
-## What is implemented
+**Active target: no-Gaussian Mesh + UV from VGGT-Ω. This target is a design, not an already working pipeline.**
 
-This repository currently builds a **per-scene reconstruction baseline**, not a trained Direct-UV texture generator:
+1. [MESH_UV_PIPELINE.md](MESH_UV_PIPELINE.md) — preferred architecture, mathematical data contract, TSDF filtering, mesh optimization alternatives, UV texturing, gate/metrics.
+2. [SOTA_2026.md](SOTA_2026.md) — verified 2025–2026 research comparison with affiliations, venues, exact reported numbers and non-transferability notes.
+3. [VGGT_OMEGA_ADAPTER.md](VGGT_OMEGA_ADAPTER.md) — official Ω API, 1B checkpoint versions, required K/pose/depth adapter and memory figures.
+4. [DECISION_NO_GAUSSIANS.md](DECISION_NO_GAUSSIANS.md) — recorded architecture decision and source removal.
+5. [DIRECT_UV.md](DIRECT_UV.md) — downstream UV VAE / cross-seam latent research after fixed mesh.
+6. [DATASETS.md](DATASETS.md), [EVALUATION.md](EVALUATION.md) — current ETH3D smoke data; train-only alignment and geometry/texture metrics.
+7. [CPU_VALIDATION.md](CPU_VALIDATION.md) — CPU-tested and not-tested boundaries.
+8. [papers/README.md](papers/README.md) — paper links + optional PDF caching script.
+9. [UPSTREAMS.md](UPSTREAMS.md), [COMPATIBILITY.md](COMPATIBILITY.md) — what actually lives in repo.
 
-    RGB images (training views only)
-         |
-         v
-    VGGT -> cameras + point cloud -> COLMAP sparse/
-         |                         |
-         |                         +-> 3DGS / gsplat -> Gaussian renders
-         |
-         +-> 2D-SuGaR (2DGS -> mesh refinement -> textured OBJ/UV)
+**Historical code:** `2dsugar/` is retained for comparison only. `3dgs/` is removed. `vggt/` is still original VGGT, **not** VGGT-Ω.
 
-The 3DGS and 2D-SuGaR branches are **parallel experiments**. 3DGS is not an input to 2D-SuGaR. Original VGGT, gsplat and 2D-SuGaR source is retained in separate first-level directories, not submodules.
+```bash
+python3 -m unittest discover -s tests -v
+python3 scripts/download_eth3d.py --dry-run
+python3 scripts/download_papers.py --list
+python3 scripts/doctor.py
+```
 
-## Read in order
-
-1. [ARCHITECTURE.md](ARCHITECTURE.md): current interfaces, coordinate conventions, actual optimization data and failure points.
-2. [DATASETS.md](DATASETS.md): the three small ETH3D scenes, download recipe and strict heldout split.
-3. [CPU_VALIDATION.md](CPU_VALIDATION.md): test matrix, exact CPU commands and GPU-only limitations.
-4. [EVALUATION.md](EVALUATION.md): metrics and the train/test leakage boundary.
-5. [DIRECT_UV.md](DIRECT_UV.md): the next research pipeline (mesh/UV representation, seams, VAE and attention).
-6. [papers/README.md](papers/README.md): annotated paper reading list, official links and optional local PDF downloader.
-7. [UPSTREAMS.md](UPSTREAMS.md), [COMPATIBILITY.md](COMPATIBILITY.md): source pins and install cautions.
-
-## Reproduce the lightweight checks
-
-    python3 -m unittest discover -s tests -v
-    python3 scripts/download_eth3d.py --dry-run
-    python3 scripts/download_papers.py --list
-    python3 scripts/download_papers.py --papers vggt directuv --dry-run
-    python3 scripts/doctor.py
-
-These checks require no model weights or GPU. Model inference/training still requires GPU-specific installations and has **not** been proven by the CPU smoke tests.
-
-For reproducibility, paper PDFs are **not** committed. Run scripts/download_papers.py to cache the selected open-access PDFs under docs/papers/pdf/ (Git-ignored). Read or cite papers using the original publishers and respect their licenses.
+Paper PDFs are fetched **on demand**, not committed. `scripts/run_all.sh` explicitly refuses to run the retired 3DGS branch and does not claim the new Mesh/UV path has been implemented.

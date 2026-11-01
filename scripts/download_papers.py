@@ -15,6 +15,11 @@ from common import ROOT
 
 PAPERS = {
     "vggt": ("2503.11651", "VGGT: Visual Geometry Grounded Transformer"),
+    "omega": ("2605.15195", "VGGT-Omega"),
+    "exmesh": ("2606.07288", "ExMesh"),
+    "exmeshpp": ("2608.24109", "ExMesh++"),
+    "geosvr": ("2509.18090", "GeoSVR"),
+    "meshsplatting": ("2512.06818", "MeshSplatting"),
     "gaussian3d": ("2308.04079", "3D Gaussian Splatting"),
     "gsplat": ("2409.06765", "gsplat library"),
     "gaussian2d": ("2403.17888", "2D Gaussian Splatting"),
@@ -26,7 +31,7 @@ PAPERS = {
     "texfusion": ("2310.13772", "TexFusion"),
     "matlat": ("2512.17302", "MatLat"),
 }
-DEFAULT = ("vggt", "gaussian2d", "directuv", "matlat")
+DEFAULT = ("omega", "exmesh", "geosvr", "matlat")
 CHUNK = 1 << 20
 
 

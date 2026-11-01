@@ -29,13 +29,6 @@ KEEP = {
         "demo_colmap.py", "requirements.txt", "requirements_demo.txt",
         "LICENSE.txt", "README.md",
     ],
-    "3dgs": [
-        "gsplat", "setup.py", "pyproject.toml", "MANIFEST.in", "config.yaml",
-        "LICENSE", "README.md",
-        "examples/simple_trainer.py", "examples/gsplat_viewer.py", "examples/requirements.txt",
-        "examples/datasets", "examples/utils.py", "examples/lib_bilagrid.py",
-        "examples/compression", "examples/helpers.py",
-    ],
     "2dsugar": [
         "gaussian_splatting", "gaussian_splatting_2d",
         "sugar_extractors", "sugar_scene", "sugar_trainers",
@@ -51,8 +44,7 @@ SKIP_NAMES = {".git", ".gitmodules", "__pycache__", ".pytest_cache",
               "SIBR_viewers", "sugar_viewer", ".github", "tests", "docs",
               "assets", "profiling", "lint", "benchmarks", "scripts",
               "node_modules", ".DS_Store"}
-# gsplat source includes experimental rendering/geometry work and lidar.
-# Keep package internals intact to avoid breaking import dependencies.
+# Preserve upstream runtime imports; strip only irrelevant demos and media.
 
 
 def invoke(*argv: str, cwd: Path | None = None) -> None:
@@ -80,8 +72,6 @@ def copy_selected(src: Path, dest: Path, name: str) -> None:
     for rel in KEEP[name]:
         origin = src / rel
         if not origin.exists():
-            if name == "3dgs" and rel.startswith("examples/") and rel != "examples/simple_trainer.py":
-                continue  # optional upstream helper; main importer checks below
             raise FileNotFoundError(f"Required {name} path absent: {rel}")
         target = dest / rel
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -97,9 +87,6 @@ def check_vendor(base: Path) -> None:
     needed = [
         "vggt/demo_colmap.py",
         "vggt/vggt/models/vggt.py",
-        "3dgs/gsplat/__init__.py",
-        "3dgs/examples/simple_trainer.py",
-        "3dgs/examples/datasets/colmap.py",
         "2dsugar/train.py",
         "2dsugar/gaussian_splatting_2d/train.py",
         "2dsugar/sugar_extractors/refined_mesh.py",
@@ -107,7 +94,7 @@ def check_vendor(base: Path) -> None:
     missing = [p for p in needed if not (base / p).is_file()]
     if missing:
         raise RuntimeError("Vendoring incomplete: " + ", ".join(missing))
-    for sub in ["vggt", "3dgs", "2dsugar"]:
+    for sub in ["vggt", "2dsugar"]:
         if (base / sub / ".git").exists() or (base / sub / ".gitmodules").exists():
             raise RuntimeError(f"Nested git metadata leaked into {sub}")
 

@@ -1,6 +1,7 @@
-"""Synthetic CPU-only integration of the VGGT -> COLMAP -> two-wrapper flow.
+"""CPU-only sanity: original VGGT's COLMAP adapter and optional legacy wrapper.
 
-This test stubs VGGT output and GPU optimization. It does not run any ML model.
+The experiment is deliberately not the proposed VGGT-Omega -> Mesh+UV system.
+No training, GPU model inference, rendering, or texture is executed.
 """
 import struct
 import sys
@@ -11,13 +12,12 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import run_vggt
-import run_3dgs
 import run_2dsugar
 from prepare_scene import prepare
 from scene_scale import robust_extent
 
 
-def mock_colmap(scene):
+def mock_colmap(scene: Path) -> None:
     sparse = scene / "sparse"
     sparse.mkdir(exist_ok=True)
     (sparse / "cameras.bin").write_bytes(b"synthetic-camera-fixture")
@@ -26,11 +26,11 @@ def mock_colmap(scene):
         handle.write(struct.pack("<Q", 32))
         for i in range(32):
             handle.write(struct.pack("<Q3d3BdQ", i + 1, float(i),
-                                     i * 0.2, i * -0.1, 100, 130, 150, 0.0, 0))
+                                     i * 0.2, -i * 0.1, 100, 130, 150, 0.0, 0))
 
 
-class TestCPUPipelineWrappers(unittest.TestCase):
-    def test_synthetic_branch_wiring(self):
+class TestRetainedCPULegacyWrappers(unittest.TestCase):
+    def test_original_vggt_colmap_export_bridge_and_optional_legacy_sugar(self):
         with tempfile.TemporaryDirectory() as d:
             scene = Path(d) / "scene"
             images = scene / "images"
@@ -50,35 +50,26 @@ class TestCPUPipelineWrappers(unittest.TestCase):
             self.assertEqual(commands[0][0], "vggt")
             self.assertIn("--use_ba", commands[0][1])
             bridge = scene / "sparse" / "0"
-            self.assertTrue(all((bridge / f).is_file() for f in
-                                ("cameras.bin", "images.bin", "points3D.bin")))
+            for path in ("cameras.bin", "images.bin", "points3D.bin"):
+                self.assertTrue((bridge / path).is_file())
             self.assertGreater(robust_extent(bridge), 10)
             self.assertEqual(prepare(scene), bridge)
 
             def capture(stage, name, argv, cwd, dry_run=False):
                 commands.append((stage, list(argv)))
 
-            with patch.object(run_3dgs, "scene_path", return_value=scene), \
-                 patch.object(run_3dgs, "execute", side_effect=capture), \
-                 patch.object(sys, "argv", ["run_3dgs.py", "--scene", "fixture",
-                                           "--steps", "20", "--data-factor", "4"]):
-                run_3dgs.main()
+            # Historical 2D-SuGaR remains opt-in, NOT the current research mainline.
             with patch.object(run_2dsugar, "scene_path", return_value=scene), \
                  patch.object(run_2dsugar, "execute", side_effect=capture), \
                  patch.object(sys, "argv", ["run_2dsugar.py", "--scene", "fixture",
                                            "--iterations", "20", "--refine-iterations", "10"]):
                 run_2dsugar.main()
-
-            self.assertEqual([x[0] for x in commands], ["vggt", "3dgs", "2dsugar"])
-            g = commands[1][1]
-            s = commands[2][1]
-            self.assertIn("--init_type", g)
-            self.assertEqual(g[g.index("--init_type") + 1], "sfm")
-            self.assertEqual(g[g.index("--data_dir") + 1], str(scene))
+            self.assertEqual([x[0] for x in commands], ["vggt", "2dsugar"])
+            s = commands[-1][1]
             self.assertEqual(s[s.index("-s") + 1], str(scene))
             self.assertEqual(s[s.index("--export_uv_textured_mesh") + 1], "True")
             self.assertEqual(s[s.index("--initialization_prior") + 1], "")
-            self.assertNotIn("ground_truth", " ".join(g + s))
+            self.assertNotIn("ground_truth", " ".join(s))
 
 
 if __name__ == "__main__":

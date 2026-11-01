@@ -1,4 +1,4 @@
-name: Vendor pinned reconstruction sources
+name: Vendor pinned retained research sources
 
 on:
   push:
@@ -21,11 +21,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
-      - name: Clone and copy pinned upstream implementation
+      - name: Clone and copy pinned original VGGT and legacy 2D-SuGaR
         run: python3 scripts/vendor_sources.py
       - name: CPU-only source/interface validation
         run: |
-          python3 -m compileall -q vggt/vggt 3dgs/gsplat 3dgs/examples 2dsugar/sugar_scene 2dsugar/sugar_trainers 2dsugar/gaussian_splatting_2d
+          python3 -m compileall -q vggt/vggt 2dsugar/sugar_scene 2dsugar/sugar_trainers 2dsugar/gaussian_splatting_2d
           python3 -m unittest discover -s tests -v
           bash -n scripts/install_envs.sh
           bash -n scripts/run_all.sh
@@ -34,10 +34,10 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add vggt 3dgs 2dsugar configs/vendored_manifest.json
+          git add vggt 2dsugar configs/vendored_manifest.json
           if git diff --cached --quiet; then
-            echo "Vendored sources unchanged"
+            echo "Retained vendor sources unchanged"
           else
-            git commit -m "Vendor pinned VGGT, gsplat and 2D-SuGaR runtime sources"
+            git commit -m "Refresh pinned original VGGT and legacy 2D-SuGaR reference sources"
             git push origin HEAD:main
           fi

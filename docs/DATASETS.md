@@ -46,11 +46,11 @@ Default split: sort filenames and hold out indices 4, 9, 14, ... (zero-indexed).
       dataset_manifest.json
       sparse/                       # later, VGGT output and 2D-SuGaR sparse/0 bridge
 
-    python3 scripts/run_vggt.py --scene eth3d_pipes --ba
-    python3 scripts/run_3dgs.py --scene eth3d_pipes --steps 7000 --data-factor 4
-    python3 scripts/run_2dsugar.py --scene eth3d_pipes --iterations 7000 --refine-iterations 2000 --resolution 4
+    # The retired 3DGS/SuGaR pipeline is no longer the default.
+    # VGGT-Ω -> TSDF -> Mesh -> UV implementation is planned, not yet runnable.
+    # See docs/MESH_UV_PIPELINE.md and docs/VGGT_OMEGA_ADAPTER.md.
 
-7k/2k steps and quarter-resolution settings are **pipeline smoke checks**, NOT converged quality experiments. Increase iterations for formal comparisons. Both branches use the identical VGGT camera estimates and sparse initialization.
+7k/2k steps and quarter-resolution settings are **pipeline smoke checks**, NOT converged quality experiments. Increase iterations for formal comparisons. Previous experiments used identical original-VGGT sparse initialization. The new Ω/TSDF/Mesh/UV pipeline is designed but not implemented.
 
 ## Measurement protocol
 

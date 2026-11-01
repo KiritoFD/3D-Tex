@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
-SCENE="${1:-fern}"
-python3 scripts/run_vggt.py --scene "$SCENE" --ba
-python3 scripts/run_3dgs.py --scene "$SCENE" --steps 7000
-python3 scripts/run_2dsugar.py --scene "$SCENE" --iterations 7000 --refine-iterations 2000
+echo "3D-Tex: old 3DGS/SuGaR pipeline retired. VGGT-Omega -> TSDF -> Mesh -> UV is not implemented yet." >&2
+echo "See docs/MESH_UV_PIPELINE.md and docs/VGGT_OMEGA_ADAPTER.md." >&2
+exit 2

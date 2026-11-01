@@ -1,19 +1,18 @@
-# Source selection and reproducibility
+# Selected upstream source provenance (2026-11-01)
 
-This is **not** a collection of Git Submodules. The three top-level directories contain copied, selected source files from pinned upstream commits, including CUDA extensions used by 2D-SuGaR.
+- **`vggt/`** — [original VGGT](https://github.com/facebookresearch/vggt) pinned in `configs/upstreams.json`. Includes original inference + COLMAP export, NOT VGGT-Ω.
+- **`2dsugar/`** — [2D-SuGaR](https://github.com/prajwalcr/2d-sugar), preserved **only as historical/reference vendor**; it retains its Gaussian/2DGS dependencies. Not part of new mainline.
+- **`3dgs/`** — [gsplat](https://github.com/nerfstudio-project/gsplat) **removed from current tree**. Retrieve earlier versions via the Git commit history if needed, but do not re-vendor it.
+- **Planned**: [VGGT-Ω](https://github.com/facebookresearch/vggt-omega) is separately pinned and minimally vendored **after checkpoint/access/license review and adapter tests**. [ExMesh](https://github.com/Fan-Treasure/ExMesh), [GeoSVR](https://github.com/Fictionarry/GeoSVR), [xatlas](https://github.com/jpcy/xatlas) are not yet incorporated.
 
-- VGGT: \`vggt\` package, \`demo_colmap.py\`, install requirements, license. Omit original training system and example media.
-- gsplat (3DGS): \`gsplat\` package + CUDA kernels and the COLMAP training example. Omit benchmarks, docs, test data, and unrelated examples.
-- 2D-SuGaR: surface optimization/extraction, 2DGS runtime, 3DGS support, depth/normal prior generator, all **three** required CUDA extensions. Omit viewer/fonts/blender tools/benchmarks.
-- No model weights, test dataset images, large media, checkout histories or nested \`.git\` directories are committed.
-- All upstream copyright notices and original licenses remain in their vendor directories. Review their licenses separately before redistribution, commercial use, or deployment.
+Current `scripts/vendor_sources.py` includes only `vggt` and `2dsugar` and excludes nested `.git`/submodules in the *resulting repository*. 2D-SuGaR requires fetching its CUDA submodule source during vendoring, but no Git submodule is committed. Licenses are retained in vendored directories.
 
-Regenerate vendored code from pinned hashes:
-\`\`\`bash
+```bash
+# Re-vendor existing pinned historical/runtime sources only.
 python3 scripts/vendor_sources.py
 python3 -m unittest discover -s tests -v
-\`\`\`
+```
 
-Updating \`configs/upstreams.json\` requires re-running the CPU checks and actual CUDA installation on a GPU host. Vendored files are not handwritten and should normally not be edited in place: patch wrappers or document a vendor patch.
+No large source repository clones, model weights, captured dataset images, or raw paper PDF binaries should be committed. Check upstream code and checkpoint licenses before reproduction/commercial usage.
 
-This project uses three isolated Conda environments, reflecting incompatible upstream PyTorch/CUDA pins. The initial CPU validations only prove basic wiring and source syntax. They do **not** prove CUDA compilation, convergence, dataset metrics, or mesh/UV fidelity.
+The `configs/vendored_manifest.json` lists the retained pinned sources. Old 3DGS provenance remains recoverable via past commits (e.g., commit `b7f0c78`).

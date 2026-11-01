@@ -3,10 +3,6 @@
     "url": "https://github.com/facebookresearch/vggt.git",
     "sha": "a288dd0f14786c93483e45524328726ab7b1b4ce"
   },
-  "3dgs": {
-    "url": "https://github.com/nerfstudio-project/gsplat.git",
-    "sha": "512d366b67073d77ca099ede742683c165dfc23b"
-  },
   "2dsugar": {
     "url": "https://github.com/prajwalcr/2d-sugar.git",
     "sha": "e62770ec6ab50076ebb6c0e3b4ac39f777f14d27"
