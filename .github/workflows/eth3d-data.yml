@@ -5,7 +5,11 @@ on:
     branches: [main]
     paths:
       - 'scripts/download_eth3d.py'
-      - 'tests/test_eth3d.py'
+      - 'scripts/download_papers.py'
+      - 'scripts/run_*.py'
+      - 'scripts/prepare_scene.py'
+      - 'scripts/scene_scale.py'
+      - 'tests/**'
       - '.github/workflows/eth3d-data.yml'
       - 'scripts/common.py'
   workflow_dispatch:
@@ -19,11 +23,13 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - name: Compile and test CLI and split logic (no GPU / no network)
+      - name: Compile, test mock HTTP downloads, validate wrappers and split logic (no GPU / no network)
         run: |
-          python3 -m compileall -q scripts/download_eth3d.py tests/test_eth3d.py
+          python3 -m compileall -q scripts tests
           python3 -m unittest discover -s tests -v
           python3 scripts/download_eth3d.py --scenes pipes relief kicker --dry-run
+          python3 scripts/download_papers.py --list
+          python3 scripts/download_papers.py --papers vggt directuv --dry-run
           python3 scripts/doctor.py
 
   public-archive-smoke:
