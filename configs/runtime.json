@@ -1,0 +1,66 @@
+{
+  "schema": 1,
+  "comment": [
+    "Runtime contract for scripts/runtime.py. Nothing here is a secret; safe to commit.",
+    "interpreters decides how a stage is launched: a per-machine python binary (venv or absolute path) or a conda env name.",
+    "profiles are memory/time budgets, not quality claims. 'full' mirrors docs; 'low'/'tiny' are the no-OOM ladder for laptops."
+  ],
+  "interpreters": {
+    "prefer": "auto",
+    "_prefer_comment": "auto | venv | conda | system. 'auto' uses venv/overrides when present, else conda env names, else the running interpreter.",
+    "venv_candidates": [".venv/Scripts/python.exe", ".venv/bin/python", "venv/bin/python"],
+    "conda_envs": {
+      "vggt": "recon-vggt",
+      "3dgs": "recon-3dgs",
+      "2dsugar": "2d-sugar",
+      "metric3d": "2d-sugar"
+    },
+    "python_overrides": {}
+  },
+  "env": {
+    "common": {
+      "PYTHONUNBUFFERED": "1",
+      "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"
+    },
+    "comment": [
+      "expandable_segments cuts allocator fragmentation, which matters most on 6-8 GiB GPUs.",
+      "CUDA_VISIBLE_DEVICES / OMP_NUM_THREADS can be injected per run with --gpus and --threads."
+    ]
+  },
+  "auto_profile": {
+    "cpu": "tiny",
+    "vram_mib": [
+      [12288, "full"],
+      [6144, "low"],
+      [0, "tiny"]
+    ],
+    "comment": "When --profile auto: no CUDA -> tiny; else pick by the free-GPU-memory threshold that matches."
+  },
+  "profiles": {
+    "full": {
+      "comment": "As documented in README/DATASETS. Needs a real CUDA workstation.",
+      "vggt": { "max_frames": 0, "image_resolution": 512, "aggregator_dtype": "auto" },
+      "3dgs": { "steps": 7000, "data_factor": 1, "test_every": 8, "sh_degree": 3,
+                "init_num_pts": 100000, "refine_stop_iter": 15000, "grow_grad2d": 0.0002, "packed": false },
+      "2dsugar": { "iterations": 7000, "refine_iterations": 2000, "resolution": 2 }
+    },
+    "low": {
+      "comment": "8 GiB-class GPU: fewer frames, bf16 backbone, quarter-res images, small Gaussian budget.",
+      "vggt": { "max_frames": 8, "image_resolution": 384, "aggregator_dtype": "bfloat16" },
+      "3dgs": { "steps": 3000, "data_factor": 4, "test_every": 8, "sh_degree": 0,
+                "init_num_pts": 20000, "refine_stop_iter": 1500, "grow_grad2d": 0.0004, "packed": true },
+      "2dsugar": { "iterations": 3000, "refine_iterations": 1000, "resolution": 4 }
+    },
+    "tiny": {
+      "comment": "Integrated graphics / CPU / CI smoke: 3 frames, tiny images, tens of steps. Proves plumbing only.",
+      "vggt": { "max_frames": 3, "image_resolution": 256, "aggregator_dtype": "bfloat16" },
+      "3dgs": { "steps": 300, "data_factor": 8, "test_every": 4, "sh_degree": 0,
+                "init_num_pts": 5000, "refine_stop_iter": 300, "grow_grad2d": 0.0008, "packed": true },
+      "2dsugar": { "iterations": 200, "refine_iterations": 50, "resolution": 8 }
+    }
+  },
+  "vram_reserve_mib": 512,
+  "weights": {
+    "vggt-1b": "VGGT-1B feedforward reconstruction checkpoint (scripts/fetch_weights.py --only vggt-1b)"
+  }
+}

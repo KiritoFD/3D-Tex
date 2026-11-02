@@ -2,7 +2,14 @@
 
 **Research goal: multi-view RGB → VGGT-Ω cameras/depth → surface Mesh → UV atlas → faithful textures (optional PBR). No 3D Gaussian stage.**
 
-> **Status:** Architecture and literature survey updated 2026-11-01. The **new mesh/UV end-to-end implementation is NOT present yet**. The current `vggt/` is the pinned **original VGGT** (not VGGT-Ω); the `2dsugar/` source is a retained, optional historical reference, **not used in the new main pipeline**. The old standalone `3dgs/` vendored code and runner have been removed.
+> **Status (2026-11-02):** the A0 path **now runs end to end** on ETH3D `kicker`:
+> `VGGT-Ω → consistency filter → TSDF → mesh.ply → ExMesh → OBJ/MTL/albedo/GLB`.
+> [QUALITY_ATTRIBUTION.md](docs/QUALITY_ATTRIBUTION.md) records what is verified against
+> ETH3D ground truth (Ω poses 0.59% / 0.57°, focals −0.25%) and what is still weak
+> (12 of 25 views fit in 8 GiB, open boundaries, ExMesh only smoke-tested at 200 iters).
+> `vggt_omega/` is a vendored source mirror of VGGT-Ω; the local `vggt/` remains the pinned
+> **original VGGT** (used only for its COLMAP exporter/legacy baseline). `2dsugar/` is a
+> retained optional historical reference; `3dgs/` is removed.
 
 ## Technical design & papers
 
@@ -13,19 +20,21 @@
 - **[Direct UV VAE roadmap](docs/DIRECT_UV.md)** — follows a stable UV carrier.
 - **[Paper index and PDF downloader](docs/papers/README.md)**.
 
-### Proposed stages (not currently runnable)
+### Stages (status as of 2026-11-02)
 
 ```text
 RGB train images
-  └─ VGGT-Ω [NOT YET PORTED] ──> intrinsics/extrinsics + depth + confidence
-        └─ multiview consistency + TSDF [PLANNED]
-              ├─ baseline mesh -> xatlas -> texture baking [PLANNED]
-              ├─ adapted ExMesh mesh/UV optimizer [PLANNED, not upstream default]
-              └─ GeoSVR sparse voxel geometry baseline [PLANNED]
+  └─ VGGT-Ω [DONE] ──> depths + confidences + K/T + pixel affine (camera z-depth)
+        └─ multiview consistency + TSDF [DONE]  -> mesh_init.ply (surface, not solid)
+              ├─ baseline mesh -> xatlas -> texture baking [DONE, superseded by ExMesh]
+              └─ adapted ExMesh mesh/UV optimizer [DONE, 200-iter smoke only]
                                      └─ fixed Mesh + UV -> texture blending/repair/PBR [PLANNED]
 ```
 
-No part of the above requires 3DGS or 2DGS, but the ExMesh **official** upstream implementation obtains its initial mesh from PGSR; replacing this with our VGGT-Ω/TSDF mesh is an unverified integration experiment.
+`GeoSVR` remains a planned geometry baseline. None of the above requires 3DGS or 2DGS.
+The ExMesh **official** stack initialises from PGSR; replacing that with our VGGT-Ω/TSDF mesh
+is the integration this repository now performs, and it is validated only as a smoke run —
+see [QUALITY_ATTRIBUTION.md](docs/QUALITY_ATTRIBUTION.md) §4 for the limits.
 
 ## What is actually available now
 

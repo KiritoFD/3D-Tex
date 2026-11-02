@@ -1,6 +1,6 @@
 # 3D-Tex research and implementation notes
 
-**Active target: no-Gaussian Mesh + UV from VGGT-Ω. This target is a design, not an already working pipeline.**
+**Active target: no-Gaussian Mesh + UV from VGGT-Ω. The A0 path (Ω geometry → TSDF → mesh → ExMesh → OBJ/GLB) now runs end to end on ETH3D `kicker`; see [QUALITY_ATTRIBUTION.md](QUALITY_ATTRIBUTION.md) for what is verified and what is still weak.**
 
 1. [MESH_UV_PIPELINE.md](MESH_UV_PIPELINE.md) — preferred architecture, mathematical data contract, TSDF filtering, mesh optimization alternatives, UV texturing, gate/metrics.
 2. [SOTA_2026.md](SOTA_2026.md) — verified 2025–2026 research comparison with affiliations, venues, exact reported numbers and non-transferability notes.
@@ -11,6 +11,8 @@
 7. [CPU_VALIDATION.md](CPU_VALIDATION.md) — CPU-tested and not-tested boundaries.
 8. [papers/README.md](papers/README.md) — paper links + optional PDF caching script.
 9. [UPSTREAMS.md](UPSTREAMS.md), [COMPATIBILITY.md](COMPATIBILITY.md) — what actually lives in repo.
+10. **[QUALITY_ATTRIBUTION.md](QUALITY_ATTRIBUTION.md)** — 质量归因：against ETH3D GT, VGGT-Ω's poses (0.59% / 0.57°) and intrinsics (−0.25% focal) are accurate; the bad meshes were our post-processing bugs. Includes before/after numbers.
+11. **[EXMESH_ADAPTER.md](EXMESH_ADAPTER.md)** — ExMesh compile patches (`<cfloat>`, `<cstdint>`, mask resize), the input directory contract, and the OBJ/GLB exporter for the checkpoint tensors.
 
 **Historical code:** `2dsugar/` is retained for comparison only. `3dgs/` is removed. `vggt/` is still original VGGT, **not** VGGT-Ω.
 

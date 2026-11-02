@@ -21,12 +21,20 @@ class TestNoGaussianMainline(unittest.TestCase):
         for key in ("upstreams", "counts", "files"):
             self.assertNotIn("3dgs", manifest[key])
 
-    def test_legacy_run_all_fails_closed(self):
-        result = subprocess.run(["bash", str(ROOT / "scripts" / "run_all.sh")],
-                                capture_output=True, text=True, check=False)
+    def test_run_all_is_no_longer_the_gaussian_pipeline(self):
+        """run_all.sh used to drive 3DGS. It must now explain the new stages or refuse."""
+        script = ROOT / "scripts" / "run_all.sh"
+        text = script.read_text(encoding="utf-8")
+        for retired in ("simple_trainer", "run_3dgs", "gsplat"):
+            self.assertNotIn(retired, text, f"run_all.sh must not resurrect {retired}")
+        # Feed the script on stdin as BYTES: Git Bash rewrites Windows argv paths, and
+        # text=True would translate "\n" to "\r\n", which bash rejects at `set -o pipefail`.
+        result = subprocess.run(["bash", "-s"], input=text.encode("utf-8"), cwd=str(ROOT),
+                                capture_output=True, check=False)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("retired", result.stderr)
-        self.assertIn("NOT", result.stderr.upper().replace("NOT YET", "NOT"))
+        stderr = result.stderr.decode("utf-8", "replace")
+        self.assertIn("retired", stderr)
+        self.assertIn("MESH_UV_PIPELINE", stderr)
 
     def test_architecture_and_paper_docs_exist(self):
         docs = ROOT / "docs"

@@ -1,0 +1,4 @@
+# Shell scripts must keep LF even on Windows checkouts: git's autocrlf would otherwise add CRLF
+# and bash fails with `set: pipefail: invalid option name`.
+*.sh text eol=lf
+*.py text eol=lf
