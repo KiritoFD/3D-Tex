@@ -88,10 +88,13 @@ def main():
         accuracy, accuracy_index = distances(source, points)
         completeness, _ = distances(mesh, observed)
         normal_angles = []
+        source_hits = []
         for p in points:
-            _, sn, _, _ = source.find_nearest(tuple(p))
+            loc, sn, _, _ = source.find_nearest(tuple(p))
             _, mn, _, _ = mesh.find_nearest(tuple(p))
+            source_hits.append(loc)
             normal_angles.append(np.degrees(np.arccos(np.clip(abs(sn.dot(mn)), 0, 1))))
+        source_hits = np.asarray(source_hits)
         scores = {}
         for multiple in (1, 2):
             precision = float((accuracy <= multiple*voxel).mean())
@@ -100,8 +103,23 @@ def main():
                                                   "fscore": 2*precision*recall/max(precision+recall, 1e-12)}
         stats = {"accuracy": summarize(accuracy, voxel), "observed_completeness": summarize(completeness, voxel),
                  "symmetric_mean_distance": float((accuracy.mean()+completeness.mean())/2),
+                 "outlier_rate_accuracy_gt2vox": float((accuracy > 2*voxel).mean()),
+                 "outlier_rate_accuracy_gt4vox": float((accuracy > 4*voxel).mean()),
+                 "outlier_rate_completeness_gt2vox": float((completeness > 2*voxel).mean()),
                  "unsigned_normal_mean_deg": float(np.mean(normal_angles)),
                  "unsigned_normal_median_deg": float(np.median(normal_angles)), **scores}
+        # Orientation split: accuracy by azimuth sector of the nearest source point,
+        # completeness by azimuth sector of the observed GT point (world frame).
+        az_acc = np.degrees(np.arctan2(source_hits[:, 1], source_hits[:, 0]))
+        az_obs = np.degrees(np.arctan2(observed[:, 1], observed[:, 0]))
+        sectors = [((-180 + 45 * i), (-180 + 45 * (i + 1))) for i in range(8)]
+        stats["orientation_split"] = {
+            "accuracy_mean_in_voxels_by_azimuth": {
+                f"{lo}..{hi}": float(accuracy[(az_acc >= lo) & (az_acc < hi)].mean() / voxel)
+                if ((az_acc >= lo) & (az_acc < hi)).any() else None for lo, hi in sectors},
+            "completeness_mean_in_voxels_by_azimuth": {
+                f"{lo}..{hi}": float(completeness[(az_obs >= lo) & (az_obs < hi)].mean() / voxel)
+                if ((az_obs >= lo) & (az_obs < hi)).any() else None for lo, hi in sectors}}
         if sharp_flags is not None:
             acc_sharp = sharp_flags[accuracy_index]
             stats["structure_split"] = {

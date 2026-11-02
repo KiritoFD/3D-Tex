@@ -22,6 +22,15 @@ normal error. Gap from the full-recall baseline: +0.08 F without losing recall.
 
 ## What has been ruled out (measured, this repo)
 
+0. **Voxel resolution and the TSDF pipeline are NOT the bottleneck** (visual
+   review, independent session): GT depth through the identical TSDF/voxel/eval
+   pipeline reproduces the stud array, open window holes and thin wheel spokes,
+   while predicted depth melts all of them on the same grid. The defect lives
+   in the predicted depth values themselves, so geometry work must change the
+   depth estimation, not the meshing. Structure survival (holes open, studs
+   present, spokes connected) is adopted as a switching criterion alongside
+   F-score — a method is only an improvement if it raises F-score without
+   lowering structure survival.
 1. **Resampling / grid alignment**: ~0.1° of the 32.16° normal error (0.3%).
    Nearest remains the correct default; bilinear is slightly harmful at
    silhouettes. (P0.5 Part A)
@@ -29,12 +38,15 @@ normal error. Gap from the full-recall baseline: +0.08 F without losing recall.
    (σc 0.02–0.10), Huber robust fusion, and their combination are all within
    −0.01 F of baseline; combined is worst (0.6102). The depth deviation is
    view-consistent, so multi-view averaging cannot remove it. (P0.5 Part B)
-3. **Small-window depth smoothing**: the warp is mid-frequency (≈20–100 px
-   wavelength, sub-percent amplitude); 5 px bilateral windows cannot touch it,
+3. **Small-window depth smoothing**: the warp is two superimposed scales — a
+   mid-frequency "dune" component (~20–100 px / 1/8–1/4 vehicle width) plus a
+   high-frequency "grit" grain; 5 px bilateral windows cannot touch the dunes,
    and pixel roughness is already lower than GT (0.0096% vs 0.067%).
 4. **More views on one ring**: saturates by 32 views and reverses by 64
    (F 0.5064/0.5255/0.5352/0.4940 at 8/16/32/64). Thin-structure precision
-   *degrades* with more views (0.28→0.19). (capture group 1)
+   *degrades* with more views (0.28→0.19), and the silhouette burr cloud grows
+   from a skirt at 8 views to body-wide spikes at 64 — densification trades
+   silhouette quality for coverage. (capture group 1 + visual review)
 5. **PGSR 10k in the 16-view configuration**: depth 1.24%→3.14%, normal
    32.16°→44.34°, F 0.3324. Retained as a negative result, not a fix. (P0)
 

@@ -74,6 +74,57 @@ Visual review: clay renders saved under `outputs/capture_setN/renders/view_*.png
 (inspection pending — media upload service failed during this session; files are
 on disk for review; numbers above are complete and unaffected).
 
+## Group 1 — view count (uniform-azimuth subsets of the dataset train views)
+
+### Visual review (34 renders, reviewed in a separate session; integrated here)
+
+Renders under `outputs/capture_setN/renders/`, `deliverables/lego_p05/renders/`
+and `deliverables/lego_p05/crops/` were inspected image by image. Conclusions:
+
+1. **The warp is two superimposed scales**: a low-frequency "dunes / dried
+   riverbed" component (wavelength ≈ 1/8–1/4 of the vehicle width, strongest on
+   the bucket interior and the base plate) plus a high-frequency isotropic
+   "grit/cotton-wool" grain that bridges lattice openings into fluffy webs and
+   half-blocks window holes. It is neither stripe- nor staircase-shaped.
+2. **GT depth through the identical TSDF/voxel pipeline reconstructs the stud
+   array, open window holes and thin wheel spokes; predicted depth melts all of
+   them.** Voxel resolution and the reconstruction pipeline are therefore NOT
+   the bottleneck — the depth values are. This is a premise-level judgement for
+   both roadmap documents.
+3. The five P0.5 variants (repro / bilinear_both / bilateral / robust_fusion /
+   combined) are visually indistinguishable at full-frame and crop level,
+   consistent with their <3% metric spread.
+4. **Indicator blind spots (important)**:
+   - The silhouette "burr cloud" GROWS with view count: 8 views = fat skirt,
+     32 = fine fringe, 64 = body-wide spikes. These fly-aways fall outside the
+     GT evaluation band and the surface samples, so abs_rel / F-score cannot
+     see them — set64 looks best on paper while gaining a new visual defect.
+   - The cab-roof crater ("volcano") is present at 8/16/32/64 views — a
+     systematic top-surface failure, not a density problem.
+   - Fluffy bridges IMPROVE completeness while destroying lattice structures.
+   - Back-facing/heldout orientations are visibly worse; the global mean hides
+     orientation non-uniformity.
+
+These motivated the new metrics below (burr rate, orientation split, structure
+survival, scale-split residual) and the wording of the capture guidelines
+("densifying one ring past a point trades silhouette quality for coverage").
+
+### New metrics added after the visual review
+
+- `burr_rate` (capture_eval): fraction of mesh surface samples projecting
+  outside the dilated GT foreground or floating ≥2 voxels in front of the GT
+  surface, any of the GT views — targets the burr cloud the F-score misses.
+- `orientation_split` (measure_surfaces): accuracy/completeness binned by
+  azimuth sector — exposes back-facing degradation hidden by the mean.
+- `structure` (capture_eval): interior-hole fill rate (windows/gaps wrongly
+  filled) and observed-surface coverage (mesh depth within ±2 voxels of GT) —
+  structure survival instead of pixel error.
+- `residual_lowfreq_rms` / `residual_highfreq_rms` (capture_eval): Gaussian
+  σ=8 px split of the per-view depth residual — quantifies the dunes (low) and
+  grit (high) components separately.
+- `outlier_rate_*` (measure_surfaces): fraction of accuracy/completeness
+  samples beyond 2/4 voxels.
+
 ## Blocked/pending axes
 
 - New-render axes (lighting direction/shadow, defocus/motion blur, texture,

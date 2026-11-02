@@ -21,25 +21,47 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", default="data/scenes/nerf_lego",
                         help="extracted dataset dir with images/ and transforms_train.json")
-    parser.add_argument("--views", type=int, required=True)
+    parser.add_argument("--views", type=int, default=None)
+    parser.add_argument("--bands", default=None,
+                        help="dual-ring selection: 'lo1,hi1,count1;lo2,hi2,count2' elevation bands; "
+                             "each band picks count views by uniform azimuth rank within the band")
     parser.add_argument("--out", required=True)
     parser.add_argument("--name", default=None)
     parser.add_argument("--azimuth-offset", type=int, default=0,
                         help="rotate the uniform pick lattice by this many dataset views")
     args = parser.parse_args()
     dataset, out = Path(args.dataset), Path(args.out)
-    name = args.name or f"set{args.views}"
+    name = args.name or "subset"
     meta = json.loads((dataset / "transforms_train.json").read_text())
     frames = meta["frames"]
     centres = np.array([np.asarray(f["transform_matrix"])[:3, 3] for f in frames])
     azimuths = np.degrees(np.arctan2(centres[:, 1], centres[:, 0]))
-    order = np.argsort(azimuths, kind="stable")
-    picks = [order[round(i * len(frames) / args.views + args.azimuth_offset) % len(frames)]
-             for i in range(args.views)]
-    picks = list(dict.fromkeys(int(p) for p in picks))
-    if len(picks) != args.views:
-        raise SystemExit(f"selection collided: {len(picks)} unique of {args.views} requested; "
-                         "adjust --azimuth-offset")
+    elevations = np.degrees(np.arcsin(centres[:, 2] / np.linalg.norm(centres, axis=1)))
+    if args.bands:
+        bands = []
+        for spec in args.bands.split(";"):
+            lo, hi, count = (float(x) for x in spec.split(","))
+            bands.append((lo, hi, int(count)))
+        picks = []
+        for lo, hi, count in bands:
+            band = np.nonzero((elevations >= lo) & (elevations < hi))[0]
+            order = band[np.argsort(azimuths[band], kind="stable")]
+            band_picks = [order[round(i * len(order) / count) % len(order)] for i in range(count)]
+            band_picks = list(dict.fromkeys(int(p) for p in band_picks))
+            if len(band_picks) != count:
+                raise SystemExit(f"band [{lo},{hi}) selection collided: "
+                                 f"{len(band_picks)} unique of {count} from {len(order)} views")
+            picks.extend(band_picks)
+        name = args.name or "dualring"
+    else:
+        name = args.name or f"set{args.views}"
+        order = np.argsort(azimuths, kind="stable")
+        picks = [order[round(i * len(frames) / args.views + args.azimuth_offset) % len(frames)]
+                 for i in range(args.views)]
+        picks = list(dict.fromkeys(int(p) for p in picks))
+        if len(picks) != args.views:
+            raise SystemExit(f"selection collided: {len(picks)} unique of {args.views} requested; "
+                             "adjust --azimuth-offset")
     images_out = out / "images"
     images_out.mkdir(parents=True, exist_ok=True)
     poses = []
@@ -56,8 +78,9 @@ def main():
                          "elevation_deg": round(float(np.degrees(
                              np.arcsin(centre[2] / np.linalg.norm(centre)))), 2)})
     gaps = np.diff(sorted(s["azimuth_deg"] for s in selected))
-    manifest = {"scheme": name, "views": args.views, "dataset": str(dataset),
-                "selection": "uniform azimuth rank over the 100 train views",
+    manifest = {"scheme": name, "views": len(picks), "dataset": str(dataset),
+                "selection": "uniform azimuth rank over the 100 train views" if not args.bands
+                else f"elevation bands {args.bands}, uniform azimuth rank within each band",
                 "azimuth_offset": args.azimuth_offset,
                 "azimuth_gap_deg": {"min": float(gaps.min()), "mean": float(gaps.mean()),
                                     "max": float(gaps.max())},
@@ -68,7 +91,7 @@ def main():
     (out / "poses.json").write_text(json.dumps(poses))
     (out / "capture_subset.json").write_text(json.dumps(manifest, indent=2) + "\n")
     print(json.dumps(manifest["azimuth_gap_deg"], indent=2))
-    print(f"[ok] {args.views} views -> {out}")
+    print(f"[ok] {len(picks)} views -> {out}")
 
 
 if __name__ == "__main__":
