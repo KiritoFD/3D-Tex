@@ -125,6 +125,64 @@ survival, scale-split residual) and the wording of the capture guidelines
 - `outlier_rate_*` (measure_surfaces): fraction of accuracy/completeness
   samples beyond 2/4 voxels.
 
+## Group 2 — dual-ring elevation diversity (16 low + 8 high)
+
+Motivation: anchor16 (elevations 9.7°–85.7°) beat every uniform ring, so test a
+controlled dual-ring from the same dataset pool: 16 views from elevation band
+[10°,50°) + 8 views from [60°,91°), uniform azimuth within each band (24 views
+total, mean azimuth gap 15.3°).
+
+```powershell
+.venv/Scripts/python.exe scripts/capture/build_dataset_subset.py --bands "10,50,16;60,91,8" --out data/scenes/capture_dualring --name dualring
+# then the same depth/VGGT/eval/measure chain as group 1
+```
+
+| Config | depth abs-rel mean/median | normal° | flat° | edge° | F@1vox | P / R | accuracy (vox) | compl. (vox) | acc_sharp / flat | P_sharp | R_sharp | burr_rate | hole_fill | coverage |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| dualring24 | 1.386% / 0.784% | 32.42 | **14.44** | 34.89 | **0.5678** | 0.503 / 0.652 | 1.713 | 0.896 | 2.515 / 1.264 | 0.265 | 0.619 | 0.0274 | 0.990 | 0.389 |
+| set16 (single ring) | 1.654% / 1.055% | 32.92 | 15.51 | 34.96 | 0.5255 | 0.503 / 0.550 | 1.623 | 1.098 | 2.343 / 1.214 | 0.270 | 0.537 | — | — | — |
+| set32 (single ring) | 1.462% / 0.888% | 32.53 | 15.38 | 34.63 | 0.5352 | 0.460 / 0.639 | 1.813 | 0.906 | 2.583 / 1.362 | 0.228 | 0.578 | — | — | — |
+| anchor16 | 1.242% / 0.701% | 32.16 | 15.61 | 33.86 | **0.6206** | 0.554 / 0.705 | 1.403 | 0.809 | — | — | — | — | — | — |
+
+Findings:
+
+1. **24 dual-ring views beat 32 single-ring views** (F 0.5678 vs 0.5352) with
+   fewer images — elevation diversity is worth more than azimuth density,
+   confirming the group-1 trajectory hypothesis. Precision stays at set16's
+   level (0.503) while recall exceeds set32 (0.652 vs 0.639).
+2. **Best flat-region normal error of any config** (14.44° vs 15.38–15.61° for
+   the rings and anchor16): high-elevation views measurably improve flat-area
+   geometry.
+3. anchor16 (0.6206) still leads — its depth error (1.24%) is the lowest of
+   all configs; the gap vs dualring (1.386%) suggests its specific placement is
+   still better than a clean two-band split, or that part of its advantage is
+   trajectory luck. Dual-ring is the best *designed* scheme so far.
+4. Orientation split (new metric): dualring accuracy is worst at azimuth
+   135..180 (2.40 vox) and −180..−135 (2.28) vs best 45..90 (1.38) — the
+   back-facing degradation seen visually is now quantified (~1.7× spread).
+5. burr_rate 0.0274 and hole_fill_rate 0.990 (99% of interior holes filled) are
+   the first baselines for the new metrics; hole filling confirms the visual
+   "fluffy bridging" — window/lattice gaps are almost entirely filled in.
+   coverage_rate 0.389 (mesh within ±2 voxels of GT depth) reflects the same
+   surface deviation as the accuracy numbers (±2 voxels is tight; pose error is
+   included).
+
+## E2 status — COLMAP PatchMatch external baseline (in progress)
+
+- Windows COLMAP 4.2.1 CUDA binary (414 MB, verified `colmap -h`) crashes with
+  STATUS_STACK_BUFFER_OVERRUN (0xC0000409) the moment PatchMatch starts on this
+  host — same native-CUDA instability as Blender EEVEE/Cycles-GPU on this box
+  (torch CUDA works). Retried at max_image_size 400: same crash. No CPU
+  PatchMatch exists (COLMAP MVS is CUDA-only).
+- Fallback in progress: building COLMAP 4.2.1 from source inside WSL (CUDA
+  toolkit 13.4, sm_89). Dependency chain so far: OpenImageIO (+tools), CGAL,
+  OpenCV. Build is running.
+- The pipeline side is ready and tested up to the crash point: aligned-pose
+  export (`export_aligned_poses.py`, identical Sim(3) as the TSDF protocol),
+  COLMAP model writer + per-reference stereo cfg (`colmap_mvs.py`), .bin depth/
+  normal parser. Once a working colmap binary exists, E2 runs anchor16 + set32
+  through the frozen evaluation.
+
 ## Blocked/pending axes
 
 - New-render axes (lighting direction/shadow, defocus/motion blur, texture,
