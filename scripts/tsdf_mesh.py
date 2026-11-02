@@ -9,9 +9,8 @@ matches docs/MESH_UV_PIPELINE.md section 3.2:
     sdf = clamp((observed_depth - projected_voxel_z) / truncation, -1, 1)
     F'  = (W*F + w*sdf) / (W + w),     W' = min(W + w, W_max)
 
-Strategy: for each frame, unproject depth at stride, splat each sample into the voxels within
-one truncation band, and merge with np.add.at over a flat grid. No Python per-voxel loop, so
-a ~200x70x130 grid fuses in seconds.
+Project each voxel into every camera once; integrate only measured truncation bands.
+Extract only cells whose eight corners were observed.
 
     python3 scripts/tsdf_mesh.py --scene eth3d_pipes --voxel-div 256
 """
@@ -38,8 +37,6 @@ def load_frame(frame: dict, root: Path, scene: Path) -> dict:
     if (height, width) != (frame["model_height"], frame["model_width"]):
         k[0] *= width / frame["model_width"]
         k[1] *= height / frame["model_height"]
-        k[0, 2] *= width / frame["model_width"]
-        k[1, 2] *= height / frame["model_height"]
     t = np.asarray(frame["T_world_to_cam"], dtype=np.float64)
     if t.shape == (3, 4):
         t4 = np.eye(4)
@@ -50,118 +47,89 @@ def load_frame(frame: dict, root: Path, scene: Path) -> dict:
     if image_path.is_file():
         from PIL import Image
         with Image.open(image_path) as im:
-            rgb = np.asarray(im.convert("RGB").resize((width, height), Image.Resampling.BILINEAR))
+            import cv2
+            affine = np.asarray(frame["pixel_affine_original_to_model"]).copy()
+            affine[0] *= width / frame["model_width"]
+            affine[1] *= height / frame["model_height"]
+            rgb = cv2.warpAffine(np.asarray(im.convert("RGB")), affine[:2], (width, height))
     return {"depth": depth, "K": k, "T": t, "rgb": rgb, "name": frame["frame"]}
 
 
 def unproject(frame: dict, rows: np.ndarray, cols: np.ndarray) -> np.ndarray:
     depth, k, t = frame["depth"], frame["K"], frame["T"]
     d = depth[rows, cols].astype(np.float64)
-    cam = np.stack([(cols + 0.5 - k[0, 2]) / k[0, 0] * d,
-                    (rows + 0.5 - k[1, 2]) / k[1, 1] * d, d], axis=-1)
+    cam = np.stack([(cols - k[0, 2]) / k[0, 0] * d,
+                    (rows - k[1, 2]) / k[1, 1] * d, d], axis=-1)
     return (t[:3, :3].T @ (cam - t[:3, 3]).T).T
 
 
 def fuse(origin: np.ndarray, voxel: float, shape: tuple[int, int, int], sdf_trunc: float,
          frames: list[dict], near: float, far: float, confs: list[np.ndarray | None],
          weight_mode: str, w_max: float, stride: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Fuse depth into `shape` and fill `band_masks` with the voxels each frame observed.
+    """Fuse one observation per camera/voxel into a dense, chunked grid.
 
     Only voxels within +-sdf_trunc of an observed surface are updated (the standard TSDF
     band), which is also what keeps memory bounded. Crucially the *mask* is tracked, so
     "unknown" is distinct from "free space": an unseen voxel keeps NaN instead of being
     silently declared outside, which is what was shredding the surface into a lattice.
     """
-    nx, ny, nz = shape
-    total = nx * ny * nz
-    wsum = np.zeros(total, dtype=np.float64)
-    fsum = np.zeros(total, dtype=np.float64)
-    csum = np.zeros(total * 3, dtype=np.float64)
-    band = int(np.ceil(sdf_trunc / voxel)) + 1
-    # The band must be dense enough to form a continuous sheet: at camera distance `d` one
-    # voxel spans ~d/f pixels, so a stride larger than that leaves gaps between neighbouring
-    # samples and marching cubes returns a lattice instead of a surface.
+    # Projective integration: one observation per voxel per frame, independent of
+    # local depth sample density. Unknown voxels never contribute a signed distance.
+    total = int(np.prod(shape))
+    wsum = np.zeros(total)
+    fsum = np.zeros(total)
+    csum = np.zeros((total, 3))
     for frame, conf in zip(frames, confs):
         depth, k, t = frame["depth"], frame["K"], frame["T"]
         height, width = depth.shape
-        rot, trans = t[:3, :3], t[:3, 3]
-        fx = float(k[0, 0])
-        finite = depth[depth > 0]
-        median_depth = float(np.median(finite)) if finite.size else 1.0
-        frame_stride = max(1, int(round(median_depth / max(fx, 1e-6) * 0.75)))
-        frame_stride = max(1, min(stride, frame_stride))
-        rr, cc = np.mgrid[0:height:frame_stride, 0:width:frame_stride]
-        rr, cc = rr.ravel(), cc.ravel()
-        d = depth[rr, cc]
-        sel = (d > near) & (d < far)
-        if sel.sum() < 16:
-            continue
-        rr, cc = rr[sel], cc[sel]
-        world = unproject(frame, rr, cc)
-        base = np.floor((world - origin) / voxel).astype(np.int64)
-
-        # Chunk the samples: (samples x band^3) grows fast and would otherwise need GBs.
-        offs = band_offsets(band)
-        chunk = max(1, min(len(rr), 200_000 // max(len(offs), 1)))
-        for start_idx in range(0, len(rr), chunk):
-            stop = min(start_idx + chunk, len(rr))
-            idx = (base[start_idx:stop, None, :] + offs[None, :, :]).reshape(-1, 3)
-            ok = np.all((idx >= 0) & (idx < np.array(shape)), axis=1)
-            if not ok.any():
-                continue
-            idx = idx[ok]
-
+        for start in range(0, total, 200_000):
+            flat = np.arange(start, min(start + 200_000, total))
+            idx = np.stack(np.unravel_index(flat, shape), axis=-1)
             pos = origin + (idx + 0.5) * voxel
-            cpos = (rot @ pos.T).T + trans
-            z = cpos[:, 2]
-            valid = z > 1e-6
-            with np.errstate(divide="ignore", invalid="ignore"):
-                u = cpos[:, 0] / z * k[0, 0] + k[0, 2]
-                v = cpos[:, 1] / z * k[1, 1] + k[1, 2]
-            in_img = valid & (u >= 0) & (u < width) & (v >= 0) & (v < height)
-            if not in_img.any():
-                continue
-            ui = np.clip(np.round(u[in_img]).astype(np.int64), 0, width - 1)
-            vi = np.clip(np.round(v[in_img]).astype(np.int64), 0, height - 1)
-            observed = depth[vi, ui].astype(np.float64)
-            zz = z[in_img]
-            # the truncation band: only +-sdf_trunc around the measured surface is meaningful
-            good = (observed > near) & (np.abs(zz - observed) <= sdf_trunc + voxel)
-            if not good.any():
-                continue
-
-            idx_g = idx[in_img][good]
-            sdf = np.clip((observed[good] - zz[good]) / sdf_trunc, -1.0, 1.0)
-            if weight_mode == "confidence" and conf is not None:
-                w = np.clip(conf[vi, ui][good].astype(np.float64), 0.05, 8.0)
-            else:
-                w = np.ones_like(sdf)
-            flat = (idx_g[:, 0] * ny + idx_g[:, 1]) * nz + idx_g[:, 2]
-            np.add.at(wsum, flat, w)
-            np.add.at(fsum, flat, w * sdf)
+            cam = pos @ t[:3, :3].T + t[:3, 3]
+            z = cam[:, 2]
+            positive = z > 1e-6
+            u = np.rint(cam[:, 0] / np.maximum(z, 1e-6) * k[0, 0] + k[0, 2]).astype(int)
+            v = np.rint(cam[:, 1] / np.maximum(z, 1e-6) * k[1, 1] + k[1, 2]).astype(int)
+            inside = positive & (u >= 0) & (u < width) & (v >= 0) & (v < height)
+            flat, z, u, v = flat[inside], z[inside], u[inside], v[inside]
+            observed = depth[v, u]
+            good = np.isfinite(observed) & (observed > near) & (observed < far)
+            good &= np.abs(observed - z) <= sdf_trunc
+            flat, z, u, v, observed = flat[good], z[good], u[good], v[good], observed[good]
+            w = np.ones(len(flat)) if conf is None or weight_mode == "uniform" else np.clip(conf[v, u], 0.0, 8.0)
+            # Batch fusion averages every view before capping the reported support;
+            # reaching W_max must not silently discard all subsequent cameras.
+            wsum[flat] += w
+            fsum[flat] += w * (observed - z) / sdf_trunc
             if frame["rgb"] is not None:
-                colour = frame["rgb"][vi, ui][good].astype(np.float64) / 255.0
-                for c in range(3):
-                    np.add.at(csum, flat * 3 + c, w * colour[:, c])
-            del idx, pos, cpos, idx_g, flat
-
-    weight = wsum.reshape(shape)
-    f = np.full(total, np.nan, dtype=np.float64)      # NaN = never observed (unknown, not outside)
-    nz_mask = wsum > 0
-    f[nz_mask] = fsum[nz_mask] / wsum[nz_mask]
-    tsdf = np.full(shape, np.nan, dtype=np.float32)
-    tsdf.reshape(-1)[nz_mask] = f[nz_mask].astype(np.float32)
+                csum[flat] += w[:, None] * frame["rgb"][v, u] / 255.0
+    known = wsum > 0
+    field = np.full(total, np.nan, dtype=np.float32)
+    field[known] = fsum[known] / wsum[known]
     colour = np.zeros((total, 3), dtype=np.float32)
-    colour[nz_mask] = (csum.reshape(-1, 3)[nz_mask] / wsum[nz_mask, None]).astype(np.float32)
-    return tsdf, colour.reshape(*shape, 3), weight
+    colour[known] = csum[known] / wsum[known, None]
+    return field.reshape(shape), colour.reshape(*shape, 3), np.minimum(wsum, w_max).reshape(shape)
 
 
-def band_offsets(band: int) -> np.ndarray:
-    """Voxel offsets whose Chebyshev distance is <= band (a cube, but ordered by radius)."""
-    r = np.arange(-band, band + 1)
-    grid = np.stack(np.meshgrid(r, r, r, indexing="ij"), axis=-1).reshape(-1, 3)
-    order = np.argsort(np.abs(grid).max(axis=1), kind="stable")
-    return grid[order]
+def extract_surface(tsdf, voxel):
+    # Every cell must have eight observed corners. Filling unknown with a positive
+    # sign alone invents surfaces along the negative-band/unknown boundary.
+    known = np.isfinite(tsdf)
+    cells = np.ones(tuple(n - 1 for n in tsdf.shape), dtype=bool)
+    for x in (0, 1):
+        for y in (0, 1):
+            for z in (0, 1):
+                cells &= known[x:x+cells.shape[0], y:y+cells.shape[1], z:z+cells.shape[2]]
+    field = np.where(known, tsdf, 1.0)
+    verts, faces, normals, _ = measure.marching_cubes(field, level=0.0)
+    centres = verts[faces].mean(axis=1)
+    idx = np.clip(np.floor(centres).astype(int), 0, np.array(cells.shape) - 1)
+    faces = faces[cells[idx[:, 0], idx[:, 1], idx[:, 2]]]
+    used = np.unique(faces)
+    remap = np.full(len(verts), -1, dtype=int)
+    remap[used] = np.arange(len(used))
+    return (verts[used] + 0.5) * voxel, remap[faces], normals[used]
 
 
 def main() -> None:
@@ -174,7 +142,7 @@ def main() -> None:
     parser.add_argument("--depth-min", type=float, default=None)
     parser.add_argument("--depth-trunc", type=float, default=None)
     parser.add_argument("--weight-mode", choices=["confidence", "uniform"], default="confidence")
-    parser.add_argument("--stride", type=int, default=2, help="depth sampling stride for fusion")
+    parser.add_argument("--stride", type=int, default=2, help="legacy CLI option; projective fusion evaluates every voxel")
     parser.add_argument("--max-frames", type=int, default=0)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
@@ -190,7 +158,7 @@ def main() -> None:
     valid = np.concatenate([f["depth"][f["depth"] > 0] for f in frames])
     if valid.size < 1000:
         raise SystemExit("Too few valid depth pixels; run consistency_filter.py first.")
-    near = args.depth_min if args.depth_min is not None else float(np.percentile(valid, 1))
+    near = args.depth_min if args.depth_min is not None else float(0.0)
     far = args.depth_trunc if args.depth_trunc is not None else float(np.median(valid) * 6.0)
     print(f"[depth] {valid.size} valid px | median {np.median(valid):.3f} | fusing [{near:.3f}, {far:.3f}]")
 
@@ -206,7 +174,7 @@ def main() -> None:
         if len(rr):
             clouds.append(unproject(frame, rr, cc))
     pts = np.concatenate(clouds)
-    lo, hi = np.percentile(pts, 2, axis=0), np.percentile(pts, 98, axis=0)
+    lo, hi = pts.min(axis=0), pts.max(axis=0)
     diagonal = float(np.linalg.norm(hi - lo))
     voxel = diagonal / args.voxel_div
     sdf_trunc = voxel * args.trunc_voxels
@@ -222,24 +190,12 @@ def main() -> None:
     observed = weight > 0
     print(f"[tsdf] {observed.sum()} voxels observed in {time.time() - start:.1f}s")
 
-    # marching cubes needs a finite field. Unknown voxels are filled with an "outside" value but
-    # we only *trust* crossings that touch an observed voxel, so unseen space cannot invent a
-    # surface. Without this the +1 fill met the -1 band on a lattice of sample points.
+    # Unknown voxels are excluded cell-by-cell by extract_surface.
     observed = weight > 0
     if not ((np.nan_to_num(tsdf, nan=1.0) < 0) & observed).any():
         raise SystemExit("No voxel penetrated the surface: fusion saw only the front side. "
                          "Raise --trunc-voxels or check the depth scale.")
-    field = np.where(observed, tsdf, 1.0).astype(np.float32)
-    verts, faces, normals, _ = measure.marching_cubes(field, level=0.0, spacing=(voxel,) * 3)
-    # drop triangles that live entirely in the filled (unknown) region
-    tri_idx = np.floor(verts / voxel).astype(np.int64)
-    tri_idx = np.clip(tri_idx, 0, np.array(observed.shape) - 1)
-    touches_observed = observed[tri_idx[:, 0], tri_idx[:, 1], tri_idx[:, 2]]
-    faces = faces[touches_observed[faces].any(axis=1)]
-    used = np.unique(faces)
-    remap = -np.ones(len(verts), dtype=np.int64)
-    remap[used] = np.arange(len(used))
-    verts, faces, normals = verts[used], remap[faces], normals[used]
+    verts, faces, normals = extract_surface(tsdf, voxel)
     verts += lo
     print(f"[mesh] {len(verts)} verts / {len(faces)} tris")
 

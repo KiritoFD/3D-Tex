@@ -79,12 +79,14 @@ def main() -> None:
     parser.add_argument("--conf-quantile", type=float, default=0.0,
                         help="drop the lowest q fraction of confidence in each frame (0-1)")
     parser.add_argument("--conf-threshold", type=float, default=0.0,
-                        help="absolute confidence cutoff. Unlike a per-frame quantile this is "
-                             "comparable across scenes: background/sky gets far lower Omega "
-                             "confidence than a real surface (measured ~3.7 vs ~28 on lego)")
+                        help="absolute raw-confidence cutoff; calibrate for each checkpoint/domain")
+    parser.add_argument("--mask-source", choices=["none", "alpha", "files"], default="none")
+    parser.add_argument("--mask-dir", default=None)
     parser.add_argument("--max-frames", type=int, default=0)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
+    if args.mask_source == "files" and not args.mask_dir:
+        parser.error("--mask-dir is required with --mask-source files")
 
     scene = scene_path(args.scene)
     root = Path(args.geometry).resolve() if args.geometry else scene / "geometry" / "omega"
@@ -103,14 +105,22 @@ def main() -> None:
     print(f"[in] {count} frames {width}x{height}, camera span {span:.4f}, "
           f"tau = {tau_abs:.4f} + {args.tau_rel:.0%} z, min_agree={args.min_agree}")
 
+    from geometry_masks import load_masks
+    masks = load_masks(scene, [c for c in cameras if c["frame"] in names],
+                       args.mask_source, args.mask_dir)
+    valid_depth = np.isfinite(depth) & (depth > 0) & np.isfinite(conf)
+    valid_depth &= masks & (conf >= args.conf_threshold)
+    if args.conf_quantile > 0:
+        cut = np.array([np.quantile(conf[i][valid_depth[i]], args.conf_quantile)
+                        if valid_depth[i].any() else np.inf for i in range(count)])
+        valid_depth &= conf >= cut[:, None, None]
     start = time.time()
     agree = np.zeros_like(depth, dtype=np.int16)
-    samples = np.zeros_like(depth, dtype=np.int16)
     per_pair = []
 
     rows, cols = np.mgrid[0:height, 0:width]
-    rows = rows.ravel().astype(np.float64) + 0.5
-    cols = cols.ravel().astype(np.float64) + 0.5
+    rows = rows.ravel().astype(np.float64)
+    cols = cols.ravel().astype(np.float64)
     for i in range(count):
         d_i = depth[i].ravel()
         k_i = K[i]
@@ -130,33 +140,33 @@ def main() -> None:
                 v = cam_j[:, 1] / z * k_j[1, 1] + k_j[1, 2]
             inside = (z > 1e-6) & (u >= 0) & (u < width) & (v >= 0) & (v < height)
             valid = inside.reshape(depth[i].shape)
-            samples[i] += valid
             if not inside.any():
                 continue
             d_j = bilinear(depth[j], u[inside], v[inside])
-            ok = np.abs(z[inside] - d_j) <= tau_abs + args.tau_rel * z[inside]
+            support = bilinear(valid_depth[j].astype(float), u[inside], v[inside]) > 0.999
+            ok = support & (np.abs(z[inside] - d_j) <= tau_abs + args.tau_rel * z[inside])
+            eligible = support & valid_depth[i].ravel()[inside]
             frame_ok = np.zeros_like(valid)
             frame_ok.reshape(-1)[np.nonzero(inside.ravel())[0][ok]] = True
             agree[i] += frame_ok
-            per_pair.append({"from": names[i], "to": names[j],
-                             "overlap": int(inside.sum()), "inlier_ratio": float(ok.mean())})
+            if eligible.any():
+                per_pair.append({"from": names[i], "to": names[j],
+                                 "overlap": int(eligible.sum()),
+                                 "inlier_ratio": float(ok[eligible].mean())})
 
-    keep = agree >= args.min_agree
-    if args.conf_threshold > 0:
-        keep &= conf >= args.conf_threshold
-    if args.conf_quantile > 0:
-        cut = np.array([np.quantile(conf[i], args.conf_quantile) for i in range(count)])
-        keep &= conf >= cut[:, None, None]
+    keep = (agree >= args.min_agree) & valid_depth
 
     out.mkdir(parents=True, exist_ok=True)
     (out / "depth").mkdir(exist_ok=True)
     (out / "mask").mkdir(exist_ok=True)
+    (out / "foreground").mkdir(exist_ok=True)
     kept_frames = [c for c in cameras if Path(c["frame"]).stem in {Path(n).stem for n in names}]
     for i, name in enumerate(names):
         stem = Path(name).stem
         filtered = np.where(keep[i], depth[i], 0.0).astype(np.float32)
         np.save(out / "depth" / f"{stem}.npy", filtered)
         np.save(out / "mask" / f"{stem}.npy", keep[i])
+        np.save(out / "foreground" / f"{stem}.npy", masks[i])
     # write only the cameras whose depth actually exists, so downstream joins cannot go stale
     (out / "cameras.json").write_text(json.dumps(
         {"camera_model": "PINHOLE", "frames": kept_frames}, indent=2) + "\n")
@@ -166,10 +176,12 @@ def main() -> None:
     report = {
         "scene": args.scene, "frames": count, "image_size": [width, height],
         "camera_span": span, "tau_abs": tau_abs, "tau_rel": args.tau_rel,
-        "min_agree": args.min_agree,
+        "min_agree": args.min_agree, "mask_source": args.mask_source,
+        "mask_provenance": "dataset alpha (GT foreground)" if args.mask_source == "alpha" else args.mask_source,
         "conf_threshold": args.conf_threshold,
         "pairs_total": len(per_pair),
         "pair_inlier_median": float(np.median(ratios)),
+        "pair_inlier_domain": "valid foreground/confidence in both projected views",
         "pair_inlier_p90": float(np.percentile(ratios, 90)),
         "kept_fraction_per_frame": [round(float(x), 4) for x in keep_frac],
         "kept_fraction_mean": float(keep_frac.mean()),

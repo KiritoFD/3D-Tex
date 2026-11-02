@@ -72,16 +72,16 @@ def main() -> None:
             problems.append(f"{stem}: non-finite depth")
         if not (depth > 0).all():
             problems.append(f"{stem}: non-positive depth where the model predicted")
-        # K_original should equal A^-1 K_model A exactly (float round-off only)
+        # K_original = A^-1 K_model; A maps original pixels to model pixels.
         affine = np.asarray(frame["pixel_affine_original_to_model"])
         k_model = np.asarray(frame["K_model"])
         k_original = np.asarray(frame["K_original"])
-        residual = np.abs(np.linalg.inv(affine) @ k_model @ affine - k_original).max()
+        residual = np.abs(np.linalg.inv(affine) @ k_model - k_original).max()
         if residual > 1e-6:
             problems.append(f"{stem}: K_original not consistent with the affine (max {residual:.2e})")
         depths.append(depth)
         confs.append(conf)
-        Ks.append(k_original)
+        Ks.append(k_model)
         frame["_t"] = np.asarray(frame["T_world_to_cam"])
         Ts.append(frame["_t"])
     depths = np.stack(depths)
@@ -113,8 +113,8 @@ def main() -> None:
         d = depths[i][sub]
         k = Ks[i]
         rows, cols = np.mgrid[0:d.shape[0], 0:d.shape[1]]
-        rows = rows * step + step / 2.0
-        cols = cols * step + step / 2.0                 # sample at pixel centres
+        rows = rows * step
+        cols = cols * step                 # sample at pixel centres
         cam = np.stack([(cols - k[0, 2]) / k[0, 0] * d,
                         (rows - k[1, 2]) / k[1, 1] * d, d], -1).reshape(-1, 3)
         rot_i, t_i = Ts[i][:3, :3], Ts[i][:3, 3]

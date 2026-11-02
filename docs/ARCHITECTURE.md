@@ -1,3 +1,5 @@
+> **2026-11-02 implementation update:** The Omega/TSDF/ExMesh path exists. Historical pending-status text below describes the original plan. See [PIPELINE_FIXES.md](PIPELINE_FIXES.md) for current corrections, reproduced artifacts and remaining quality limits.
+
 # Architecture and source/status contract (2026-11-01)
 
 ## What we WILL build

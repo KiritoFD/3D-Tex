@@ -1,3 +1,5 @@
+> **2026-11-02 implementation update:** The Omega/TSDF/ExMesh path exists. Historical pending-status text below describes the original plan. See [PIPELINE_FIXES.md](PIPELINE_FIXES.md) for current corrections, reproduced artifacts and remaining quality limits.
+
 # 从 VGGT-Ω 到 Mesh + UV：无 Gaussian 主线（2026-11-01）
 
 **决策：不训练 3DGS / 2DGS，不把 Gaussian 当最终物体表面，也不把它作为默认中间阶段。**

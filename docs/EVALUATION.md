@@ -1,3 +1,5 @@
+> **2026-11-02 implementation update:** The Omega/TSDF/ExMesh path exists. Historical pending-status text below describes the original plan. See [PIPELINE_FIXES.md](PIPELINE_FIXES.md) for current corrections, reproduced artifacts and remaining quality limits.
+
 # Geometry, UV and appearance evaluation — do not conflate SOTA axes
 
 **Main rule:** split test views *before* VGGT-Ω/TSDF/mesh optimization. Both intrinsics and scale can be uncertain; heldout GT cameras can be used only for metric rendering after a train-only Sim(3) fit.

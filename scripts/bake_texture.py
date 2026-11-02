@@ -8,8 +8,8 @@ This is the step that produces an asset you can double-click in Blender:
 
 Texture baking is *observed* multiview fusion, not generation: every texel gets the
 surface point it belongs to, that point is projected into every training camera, and the
-visible contributions are combined (visibility z-buffer + incidence-angle weight + weighted
-median for robustness). Texels nobody saw stay in `observed_mask.png` = 0 rather than being
+visible contributions are combined (filtered-depth occlusion check + incidence-angle
+weighted mean). Texels nobody saw stay in `observed_mask.png` = 0 rather than being
 invented.
 
     python3 scripts/bake_texture.py --scene eth3d_pipes --texels 1024
@@ -38,19 +38,18 @@ def keep_major_components(mesh, min_share: float):
     """Keep components that together make up min_share of triangles; report what was dropped."""
     import trimesh
 
-    parts = mesh.split(only_watertight=False)
-    parts.sort(key=lambda p: len(p.faces), reverse=True)
-    total = sum(len(p.faces) for p in parts)
-    kept, running = [], 0
-    for part in parts:
-        kept.append(part)
-        running += len(part.faces)
-        if running / total >= min_share:
-            break
-    merged = trimesh.util.concatenate(kept)
-    return merged, {"components_in": len(parts), "components_kept": len(kept),
-                    "faces_in": total, "faces_kept": int(len(merged.faces)),
-                    "share_kept": round(len(merged.faces) / total, 4)}
+    labels = trimesh.graph.connected_component_labels(mesh.face_adjacency, node_count=len(mesh.faces))
+    sizes = np.bincount(labels)
+    order = np.argsort(sizes)[::-1]
+    count = min(len(order), int(np.searchsorted(np.cumsum(sizes[order]), len(mesh.faces) * min_share)) + 1)
+    keep = np.isin(labels, order[:count])
+    selected = mesh.faces[keep]
+    used, inverse = np.unique(selected, return_inverse=True)
+    cleaned = trimesh.Trimesh(vertices=mesh.vertices[used], faces=inverse.reshape(-1,3), process=False)
+    return cleaned, {"components_in": len(sizes), "components_kept": count,
+                    "faces_in": len(mesh.faces), "faces_kept": len(selected),
+                    "share_kept": round(float(keep.mean()), 4)}
+
 
 
 def unwrap(mesh):
@@ -135,6 +134,9 @@ def main() -> None:
     parser.add_argument("--min-views", type=int, default=1,
                         help="texels seen by fewer cameras are left unobserved")
     parser.add_argument("--angle-penalty", type=float, default=0.25)
+    parser.add_argument("--filtered", default=None)
+    parser.add_argument("--geometry", default=None, help="camera source; defaults to geometry/omega")
+    parser.add_argument("--max-faces", type=int, default=100000)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
@@ -151,6 +153,8 @@ def main() -> None:
     print(f"[clean] {comp_stats['components_kept']}/{comp_stats['components_in']} components, "
           f"{comp_stats['faces_kept']} faces ({comp_stats['share_kept']:.1%})")
 
+    if len(mesh.faces) > args.max_faces:
+        mesh = mesh.simplify_quadric_decimation(face_count=args.max_faces)
     vmapping, uv_faces, uv_coords = unwrap(mesh)
     vertices = mesh.vertices[vmapping]
     faces = mesh.faces
@@ -158,7 +162,8 @@ def main() -> None:
           f"uv range [{uv_coords.min():.3f}, {uv_coords.max():.3f}]")
     uv_face_coords = uv_coords[uv_faces]
 
-    cameras = load_cameras(scene / "geometry" / "omega")
+    geometry = Path(args.geometry) if args.geometry else scene / "geometry" / "omega"
+    cameras = load_cameras(geometry)
     images = []
     for cam in cameras:
         with Image.open(scene / "images" / cam["file"]) as im:
@@ -173,17 +178,21 @@ def main() -> None:
           f"({len(owner) / args.texels ** 2:.1%})")
 
     # surface position + normal per texel
-    tri = faces[owner]
+    tri = uv_faces[owner]
     world = (vertices[tri[:, 0]] * barys[:, 0:1] + vertices[tri[:, 1]] * barys[:, 1:2]
              + vertices[tri[:, 2]] * barys[:, 2:3])
-    e1 = mesh.vertices[tri[:, 1]] - mesh.vertices[tri[:, 0]]
-    e2 = mesh.vertices[tri[:, 2]] - mesh.vertices[tri[:, 0]]
+    e1 = vertices[tri[:, 1]] - vertices[tri[:, 0]]
+    e2 = vertices[tri[:, 2]] - vertices[tri[:, 0]]
     normal = np.cross(e1, e2)
     normal /= np.maximum(np.linalg.norm(normal, axis=1, keepdims=True), 1e-12)
 
     acc = np.zeros((len(owner), 3), dtype=np.float64)
     wsum = np.zeros(len(owner), dtype=np.float64)
     hits = np.zeros(len(owner), dtype=np.int32)
+    from consistency_filter import bilinear as sample_depth
+    filtered = Path(args.filtered) if args.filtered else scene / "geometry" / "filtered"
+    raw_frames = json.loads((geometry / "cameras.json").read_text())["frames"]
+    affines = {f["frame"]: np.asarray(f["pixel_affine_original_to_model"]) for f in raw_frames}
     for cam, image in zip(cameras, images):
         rot, trans = cam["T"][:3, :3], cam["T"][:3, 3]
         cam_pos = -rot.T @ trans
@@ -191,7 +200,7 @@ def main() -> None:
         z = cam_xyz[:, 2]
         view = cam_pos - world
         view /= np.maximum(np.linalg.norm(view, axis=1, keepdims=True), 1e-12)
-        facing = np.clip((normal * view).sum(axis=1), 0.0, 1.0)
+        facing = np.abs((normal * view).sum(axis=1))
         k = cam["K"]
         with np.errstate(divide="ignore", invalid="ignore"):
             u = cam_xyz[:, 0] / z * k[0, 0] + k[0, 2]
@@ -202,7 +211,16 @@ def main() -> None:
         scale_x = image.shape[1] / cam["width"]
         scale_y = image.shape[0] / cam["height"]
         weight = (facing ** 2 + 1e-3) * (facing > args.angle_penalty)
-        weight = weight * inside
+        depth = np.load(filtered / "depth" / (cam["stem"] + ".npy"))
+        affine = affines[cam["name"]]
+        mu, mv = u * affine[0, 0] + affine[0, 2], v * affine[1, 1] + affine[1, 2]
+        mu = np.nan_to_num(mu, nan=-1, posinf=-1, neginf=-1)
+        mv = np.nan_to_num(mv, nan=-1, posinf=-1, neginf=-1)
+        measured = sample_depth(depth, mu, mv)
+        visible = (measured > 0) & (np.abs(measured - z) < 0.002 + 0.02 * z)
+        weight = weight * inside * visible
+        u = np.nan_to_num(u, nan=0, posinf=0, neginf=0)
+        v = np.nan_to_num(v, nan=0, posinf=0, neginf=0)
         acc += weight[:, None] * bilinear(image, u * scale_x, v * scale_y)
         wsum += weight
         hits += (weight > 0).astype(np.int32)
@@ -219,14 +237,21 @@ def main() -> None:
     Image.fromarray((np.clip(texture, 0, 1) * 255).astype(np.uint8)).save(out / "albedo.png")
     Image.fromarray(observed_mask).save(out / "observed_mask.png")
 
-    visual = trimesh.visual.TextureVisuals(uv=uv_coords, image=Image.fromarray(
+    visual = trimesh.visual.TextureVisuals(uv=np.column_stack([uv_coords[:, 0], 1.0 - uv_coords[:, 1]]), image=Image.fromarray(
         (np.clip(texture, 0, 1) * 255).astype(np.uint8)))
     textured = trimesh.Trimesh(vertices=vertices, faces=uv_faces, visual=visual,
                                process=False, validate=False)
     obj_path = out / "mesh.obj"
     textured.export(str(obj_path))
+    # Match the GLB's white albedo multiplier instead of trimesh's grey default.
+    (out / "material.mtl").write_text(
+        "newmtl material_0\nKa 1 1 1\nKd 1 1 1\nKs 0 0 0\nNs 0\nd 1\nillum 1\nmap_Kd albedo.png\n")
     glb_path = out / "mesh.glb"
-    textured.export(str(glb_path))
+    from glb_writer import write_textured_glb, verify_glb
+    write_textured_glb(glb_path, vertices, uv_faces,
+                       np.column_stack([uv_coords[:, 0], 1.0 - uv_coords[:, 1]]),
+                       Image.fromarray((np.clip(texture, 0, 1) * 255).astype(np.uint8)))
+    print(verify_glb(glb_path))
 
     stats = {
         "scene": args.scene, "mesh_in": str(mesh_path), **comp_stats,

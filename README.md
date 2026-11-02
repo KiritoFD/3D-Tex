@@ -2,13 +2,15 @@
 
 **Research goal: multi-view RGB → VGGT-Ω cameras/depth → surface Mesh → UV atlas → faithful textures (optional PBR). No 3D Gaussian stage.**
 
+> **Quality correction (2026-11-02):** Foreground filtering, TSDF unknown boundaries, per-view ExMesh calibration and UV indexing have been corrected. See [PIPELINE_FIXES.md](docs/PIPELINE_FIXES.md) for the new lego artifacts and limits.
+>
 > **Status (2026-11-02):** the A0 path **now runs end to end** on ETH3D `kicker`:
 > `VGGT-Ω → consistency filter → TSDF → mesh.ply → ExMesh → OBJ/MTL/albedo/GLB`.
 > [QUALITY_ATTRIBUTION.md](docs/QUALITY_ATTRIBUTION.md) records what is verified against
 > ETH3D ground truth (Ω poses 0.59% / 0.57°, focals −0.25%) and what is still weak
 > (12 of 25 views fit in 8 GiB, open boundaries, ExMesh only smoke-tested).
 > **Known defects and their fixes are itemised in [docs/ISSUES_2026_11_02.md](docs/ISSUES_2026_11_02.md)**;
-> the dominant open problem is background/sky being fused into a shell around the object.
+> the previous dominant problem was background/sky fused into an object shell; the corrected lego run removes that shell, with fine geometry still weak.
 > `vggt_omega/` is a vendored source mirror of VGGT-Ω; the local `vggt/` remains the pinned
 > **original VGGT** (used only for its COLMAP exporter/legacy baseline). `2dsugar/` is a
 > retained optional historical reference; `3dgs/` is removed.

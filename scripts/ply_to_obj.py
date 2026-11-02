@@ -135,7 +135,7 @@ def main() -> None:
         "map_Kd albedo.png\n")
     with (out / "mesh.obj").open("w") as handle:
         handle.write("mtllib mesh.mtl\n")
-        for x, y, z in new_xyz:
+        for x, y, z in new_xyz[vmapping]:
             handle.write(f"v {x:.6f} {y:.6f} {z:.6f}\n")
         for u, v in obj_uv:
             handle.write(f"vt {u:.6f} {v:.6f}\n")

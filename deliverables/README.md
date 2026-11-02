@@ -1,3 +1,34 @@
+# GT 深度 → TSDF 对照（2026-11-02）
+
+`lego_gt_tsdf/` 使用公开 lego Blender 源场景射线求交生成浮点 GT 深度，固定为相同 16 视角、512²、TSDF 256 分辨率；未过 ExMesh、未做表面平滑。
+
+- `mesh.glb` / `mesh.obj` + `material.mtl` + `albedo.png`：10 万面、2048² 彩色资产。
+- `mesh_raw.ply`：25.1 万面原始 TSDF 几何。
+- `preview.blend`：默认显示贴图。
+- `raw_geometry/preview.blend`：无贴图原始几何。
+- `comparison.png`：原图 / VGGT→TSDF / GT→TSDF，彩色与原始几何两行。
+
+源场景轮廓与数据集平均 IoU 0.9868，存在小幅差异。GT 对照更规整，但细结构和可见性缺口仍在。实验记录见 [GT_TSDF_DIAGNOSTIC.md](../docs/GT_TSDF_DIAGNOSTIC.md)。
+
+---
+
+# 修正版 lego（2026-11-02）
+
+最新产物位于 `lego_fixed/`，保留旧版 `lego/` 供比较：
+
+- `lego_fixed/mesh.glb`：10,000 步 ExMesh，102,849 顶点 / 201,153 面，1024² 纹理。
+- `lego_fixed/preview.blend`：已设好四台相机与无光照贴图材质的 Blender 预览。
+- `lego_fixed/render_4views.png`：修正版四视角。
+- `lego_fixed/comparison.png`：原图 / 旧版 700 步 / 修正版 10,000 步，同相机比较。
+- `lego_fixed/comparison_report.json`：四个训练视角的轮廓 IoU 0.712→0.964，前景 PSNR 16.92→19.17 dB；不是 heldout benchmark。
+- `lego_fixed_tsdf/`：修正融合与烘焙后的独立 CPU 基线，2048² 观测贴图。
+
+本次使用数据集 RGBA alpha 作为 **GT 前景 mask**。背景外壳已去除，细杆、孔洞与表面细节仍不准确，不能称为完整高质量资产。完整修复记录见 [PIPELINE_FIXES.md](../docs/PIPELINE_FIXES.md)。
+
+以下为旧版交付记录。
+
+---
+
 # 交付物：重建结果（2026-11-02）
 
 本目录是**生成产物**，已 git-ignore，不进版本库。每个子目录都能直接用 Blender 打开。

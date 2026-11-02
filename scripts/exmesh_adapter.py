@@ -9,10 +9,10 @@ Verified against the official repo (Fan-Treasure/ExMesh):
 
 So this script writes:
     <workdir>/images/<name>                 (copied / resized training photos)
-    <workdir>/sparse/0/{cameras,images,points3D}.bin    (from Omega K/T)
+    <workdir>/sparse/0/{cameras,images,points3D}.txt    (from Omega K/T)
     <workdir>/mesh.ply                      (copied TSDF triangle mesh)
     <workdir>/mono_priors/da3/<stem>.npz    {"depth": Omega depth on the mesh grid}
-    <workdir>/train_mask/<stem>_gtmask.png  (foreground mask from cross-view agreement)
+    <workdir>/train_mask/<stem>_gtmask.png  (explicit foreground mask (not a depth quantile))
 
 The `da3` directory name is upstream's; the code only reads the NPZ "depth" array, so Omega's
 depth drops in without running Depth Anything 3 (noted in the plan supplied by the user).
@@ -34,6 +34,13 @@ import numpy as np
 from common import ROOT, scene_path
 
 
+def resize_intrinsics(k, source_wh, target_wh):
+    scaled = np.asarray(k, dtype=np.float64).copy()
+    scaled[0] *= target_wh[0] / source_wh[0]
+    scaled[1] *= target_wh[1] / source_wh[1]
+    return scaled
+
+
 def build_colmap(sparse: Path, cameras: list[dict], width: int, height: int) -> dict:
     """Write COLMAP *text* model (cameras.txt / images.txt / points3D.txt).
 
@@ -42,10 +49,10 @@ def build_colmap(sparse: Path, cameras: list[dict], width: int, height: int) -> 
     stable across decades and ExMesh's reader (read_write_model.py) handles it directly.
     """
     sparse.mkdir(parents=True, exist_ok=True)
-    k = cameras[0]
-    lines = ["# Camera list with one line of data per camera:",
-             "# CAMERA_ID, MODEL, WIDTH, HEIGHT, PARAMS[]",
-             f"1 PINHOLE {width} {height} {k['_fx']:.6f} {k['_fy']:.6f} {width / 2:.6f} {height / 2:.6f}"]
+    lines = ["# CAMERA_ID MODEL WIDTH HEIGHT FX FY CX CY"]
+    for index, frame in enumerate(cameras, start=1):
+        k = frame["_K"]
+        lines.append(f"{index} PINHOLE {width} {height} {k[0,0]:.6f} {k[1,1]:.6f} {k[0,2]:.6f} {k[1,2]:.6f}")
     (sparse / "cameras.txt").write_text("\n".join(lines) + "\n")
 
     lines = ["# Image list with two lines of data per image:",
@@ -55,7 +62,7 @@ def build_colmap(sparse: Path, cameras: list[dict], width: int, height: int) -> 
         q = rotation_matrix_to_quaternion(rot)
         t = frame["_T"][:3, 3]
         lines.append(f"{index} {' '.join(f'{v:.9f}' for v in q)} "
-                     f"{' '.join(f'{v:.9f}' for v in t)} 1 {frame['file']}")
+                     f"{' '.join(f'{v:.9f}' for v in t)} {index} {frame['file']}")
         lines.append("")            # empty 2D-observation line, as COLMAP writes it
     (sparse / "images.txt").write_text("\n".join(lines) + "\n")
     (sparse / "points3D.txt").write_text(
@@ -94,30 +101,24 @@ def rotation_matrix_to_quaternion(rot: np.ndarray) -> np.ndarray:
     return q / np.linalg.norm(q)
 
 
-def foreground_mask(depth: np.ndarray, mask_path: Path, image_path: Path,
-                    far_quantile: float) -> np.ndarray:
-    """Object mask = cross-view-agreed depth, minus far background (table/wall)."""
-    keep = np.load(mask_path) if mask_path.is_file() else (depth > 0)
-    valid = keep & (depth > 0)
-    if valid.sum() < 100:
-        return valid.astype(np.uint8) * 255
-    limit = float(np.quantile(depth[valid], far_quantile))
-    return ((valid) & (depth <= limit)).astype(np.uint8) * 255
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build an ExMesh workdir from Omega geometry")
     parser.add_argument("--scene", required=True)
     parser.add_argument("--out", default=None, help="default <scene>/exmesh_workdir")
     parser.add_argument("--mesh", default=None, help="default <scene>/mesh/mesh_init.ply")
+    parser.add_argument("--max-faces", type=int, default=0)
+    parser.add_argument("--min-component-faces", type=int, default=0,
+                        help="optional single-object cleanup; zero preserves every component")
     parser.add_argument("--filtered", default=None, help="default <scene>/geometry/filtered")
     parser.add_argument("--geometry", default=None, help="default <scene>/geometry/omega")
     parser.add_argument("--image-long-side", type=int, default=1024,
                         help="copy photos at this long side (ExMesh trains at -r 2 by default)")
-    parser.add_argument("--far-quantile", type=float, default=0.85,
-                        help="mask out depth beyond this within-object quantile (drops table/wall)")
+    parser.add_argument("--far-quantile", type=float, default=1.0,
+                        help="deprecated; must be 1.0 (foreground comes from explicit masks)")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
+    if args.far_quantile != 1.0:
+        raise ValueError("Depth quantiles are not foreground segmentation; use explicit masks")
 
     from PIL import Image
 
@@ -137,48 +138,67 @@ def main() -> None:
     for sub in ("images", "sparse/0", "mono_priors/da3", "train_mask"):
         (work / sub).mkdir(parents=True, exist_ok=True)
 
-    # one shared intrinsics entry: Omega predicts a centred principal point, and ExMesh's Camera
-    # class also assumes a centred one, so exporting a single PINHOLE camera is faithful here.
+    # Preserve each view calibration; ExMesh currently requires centred principal points.
     sizes = set()
     for frame in cameras:
         stem = Path(frame["frame"]).stem
-        depth = np.load(filtered / "depth" / f"{stem}.npy")
+        depth = np.load(geometry / "depth" / f"{stem}.npy")
         depth = depth[..., 0] if depth.ndim == 3 else depth
         k = np.asarray(frame["K_original"], dtype=np.float64)
         t = np.asarray(frame["T_world_to_cam"], dtype=np.float64)
         frame["_T"] = t
-        frame["_fx"] = k[0, 0]          # K_original is already in copied-image pixels
-        frame["_fy"] = k[1, 1]
-        # depth is annotated in ORIGINAL pixels (K_original), so the NPZ keeps its own shape
-        np.savez_compressed(work / "mono_priors" / "da3" / f"{stem}.npz",
-                            depth=depth.astype(np.float32))
-
         source = scene / "images" / frame["file"]
         with Image.open(source) as im:
-            im = im.convert("RGB")
+            im = im.convert("RGBA") if "A" in im.getbands() else im.convert("RGB")
             scale = args.image_long_side / max(im.size)
             if scale < 1:
                 im = im.resize((int(im.width * scale), int(im.height * scale)),
                                Image.Resampling.LANCZOS)
+            scaled_k = resize_intrinsics(k, (frame["original_width"], frame["original_height"]), im.size)
+            if not np.allclose(scaled_k[:2, 2], [im.width/2, im.height/2], atol=0.5):
+                raise ValueError("ExMesh renderer requires centred principal points; implement off-axis projection first")
+            frame["_K"] = scaled_k
             target = work / "images" / frame["file"]
             im.save(target, quality=95)
             sizes.add(im.size)
 
-        mask_path = filtered / "mask" / f"{stem}.npy"
-        mask = foreground_mask(depth, mask_path, source, args.far_quantile)
-        Image.fromarray(mask).resize(depth.shape[::-1], Image.Resampling.NEAREST).save(
-            work / "train_mask" / f"{stem}_gtmask.png")
+        import cv2
+        # Map model-grid priors back through crop/resize, then onto the copied image.
+        affine = np.asarray(frame["pixel_affine_original_to_model"])
+        resize = np.diag([im.width / frame["original_width"], im.height / frame["original_height"], 1.])
+        model_to_copy = resize @ np.linalg.inv(affine)
+        copied_depth = cv2.warpAffine(depth, model_to_copy[:2], im.size, flags=cv2.INTER_NEAREST)
+        np.savez_compressed(work / "mono_priors" / "da3" / f"{stem}.npz", depth=copied_depth)
+        mask_path = filtered / "foreground" / f"{stem}.npy"
+        mask = np.load(mask_path).astype(np.uint8) * 255
+        mask = cv2.warpAffine(mask, model_to_copy[:2], im.size, flags=cv2.INTER_NEAREST)
+        Image.fromarray(mask).save(work / "train_mask" / f"{stem}_gtmask.png")
 
     if len(sizes) > 1:
         raise SystemExit(f"ExMesh needs identical image sizes, got {sorted(sizes)}")
     width, height = sizes.pop()
     colmap_stats = build_colmap(work / "sparse" / "0", cameras, width, height)
-    shutil.copy2(mesh, work / "mesh.ply")
+    if args.max_faces or args.min_component_faces:
+        import trimesh
+        from tsdf_mesh import write_ply
+        surface = trimesh.load(mesh, process=False)
+        labels = trimesh.graph.connected_component_labels(surface.face_adjacency, node_count=len(surface.faces))
+        sizes = np.bincount(labels)
+        faces = surface.faces[sizes[labels] >= args.min_component_faces]
+        used, inverse = np.unique(faces, return_inverse=True)
+        surface = trimesh.Trimesh(vertices=surface.vertices[used], faces=inverse.reshape(-1, 3), process=False)
+        if args.max_faces and len(surface.faces) > args.max_faces:
+            surface = surface.simplify_quadric_decimation(face_count=args.max_faces)
+        write_ply(work / "mesh.ply", surface.vertices, surface.faces,
+                  np.full_like(surface.vertices, .6), surface.vertex_normals)
+    else:
+        shutil.copy2(mesh, work / "mesh.ply")
 
     stats = {"scene": args.scene, "workdir": str(work), "images": len(cameras),
              "image_size": [width, height], **colmap_stats,
              "mesh_ply": str(work / "mesh.ply"), "mesh_bytes": (work / "mesh.ply").stat().st_size,
              "mask_far_quantile": args.far_quantile,
+             "max_faces": args.max_faces, "min_component_faces": args.min_component_faces,
              "note": "Omega depth/pose gauge; no rescaling applied anywhere."}
     (work / "adapter_report.json").write_text(json.dumps(stats, indent=2) + "\n")
     print(f"[out] {work}")

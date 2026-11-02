@@ -1,3 +1,5 @@
+> **2026-11-02 correction:** Export one scaled PINHOLE calibration per view, preserve alpha, and transform raw depth plus explicit foreground masks to the copied-image grid. Depth quantiles are not foreground masks. See [PIPELINE_FIXES.md](PIPELINE_FIXES.md). The shared-camera/quantile descriptions below are historical.
+
 # ExMesh 接入：编译、输入适配与资产导出（2026-11-02）
 
 上游：[Fan-Treasure/ExMesh](https://github.com/Fan-Treasure/ExMesh)（CVPR 2026）。

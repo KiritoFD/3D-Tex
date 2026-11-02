@@ -1,3 +1,5 @@
+> **2026-11-02 implementation update:** The Omega/TSDF/ExMesh path exists. Historical pending-status text below describes the original plan. See [PIPELINE_FIXES.md](PIPELINE_FIXES.md) for current corrections, reproduced artifacts and remaining quality limits.
+
 # VGGT-Ω 接入设计：与旧 VGGT 的接口区别
 
 **尚未实现。不要把当前 `scripts/run_vggt.py` 误认为 Ω 推理。** 旧版 `vggt/` vendored 仍用于兼容性 smoke tests；下一步单独增加 `vggt_omega/` 平级源码精简镜像（不使用 submodule），而不是覆盖原目录。
