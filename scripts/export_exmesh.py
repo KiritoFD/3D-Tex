@@ -89,8 +89,17 @@ def main() -> None:
     glb_bytes = None
     try:
         import trimesh
-        visual = trimesh.visual.TextureVisuals(uv=uvs, image=Image.fromarray(texture))
-        mesh = trimesh.Trimesh(vertices=verts, faces=faces, visual=visual,
+        # trimesh only writes TEXCOORD_0 when the mesh's `visual.uv` length matches its
+        # VERTEX count. ExMesh's `uvs` is indexed per corner, so use the OBJ-style layout:
+        # expand positions to the per-corner array and keep one UV per new vertex.
+        from trimesh.visual.material import SimpleMaterial
+        corner_uv = uvs[uv_idx.reshape(-1)]
+        corner_pos = verts[faces.reshape(-1)]
+        remap = np.repeat(np.arange(len(faces)) * 3, 3)
+        new_faces = remap.reshape(-1, 3)
+        material = SimpleMaterial(image=Image.fromarray(texture))
+        visual = trimesh.visual.TextureVisuals(uv=corner_uv, material=material)
+        mesh = trimesh.Trimesh(vertices=corner_pos, faces=new_faces, visual=visual,
                                process=False, validate=False)
         mesh.export(str(out / "mesh.glb"))
         glb_bytes = (out / "mesh.glb").stat().st_size

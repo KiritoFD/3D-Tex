@@ -8,3 +8,7 @@ __pycache__/
 .pytest_cache/
 *.log
 .DS_Store
+
+# Large derived assets (models/renders); regenerate with scripts/*.py
+deliverables/*
+!deliverables/README.md
