@@ -167,6 +167,50 @@ Findings:
    surface deviation as the accuracy numbers (±2 voxels is tight; pose error is
    included).
 
+## Group 3 — capture resolution (256/400/512 vs 800, identical anchor16 views/GT)
+
+Motivation: GT depth and camera grid are resolution-independent at the frozen
+512 model grid; only the input images are rescaled (cv2.INTER_AREA from the 800²
+originals) and K_original rescaled to match. This isolates the effect of input
+resolution on VGGT-Ω depth, with zero change to trajectory, lighting, or TSDF.
+
+```powershell
+.venv/Scripts/python.exe scripts/capture/build_resolution_subset.py --resolutions 256,400,512
+.venv/Scripts/python.exe scripts/adapters/vggt_omega_geometry.py --scene-dir data/scenes/capture_resR ... --image-resolution 512
+.venv/Scripts/python.exe scripts/capture/capture_eval.py --capture data/scenes/capture_resR --out outputs/capture_resR --p0-out deliverables/lego_p0
+```
+
+| Config | depth abs-rel mean/median | normal° | flat° | edge° | low-RMS | high-RMS | burr_rate | hole_fill | coverage |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| res256 | 1.371% / 0.756% | 33.13 | 16.72 | 34.95 | 0.0119 | 0.0233 | 0.0244 | 0.990 | 0.406 |
+| res400 | 1.265% / 0.694% | 32.48 | 16.14 | 34.14 | 0.0104 | 0.0223 | 0.0186 | 0.985 | 0.468 |
+| res512 | 1.278% / 0.758% | 32.12 | 15.63 | 33.80 | 0.0103 | 0.0218 | 0.0191 | 0.985 | 0.418 |
+| anchor16 (800² baseline) | 1.242% / 0.701% | 32.16 | 15.61 | 33.86 | — | — | — | — | — |
+
+Findings:
+
+1. **Resolution axis is nearly flat from 400² up**: res400 and res512 sit within
+   ~0.02–0.04% abs-rel of the 800² anchor16 baseline, and normal error matches
+   to <0.4°. VGGT-Ω's 512² model input, not the capture resolution, is the
+   dominant factor at these scales — 400² and 512² captures are upsampled by
+   the loader to 512² anyway.
+2. **res256 degrades measurably but modestly**: abs-rel +0.13pp (1.37% vs
+   1.24%), normal +1.0°, edge normal +1.1°. High-frequency RMS rises the most
+   (0.0233 vs ~0.0218): the finest "grit" component of the warp grows at very
+   low capture resolution, consistent with the model having less texture detail
+   to latch onto.
+3. **burr_rate and hole_fill are stable** across 400/512 (0.019/0.985): the
+   silhouette burr cloud and structure melting do NOT improve with capture
+   resolution. res256 burr 0.0244 is marginally worse than 400/512.
+4. **coverage_rate non-monotone** (0.406 / 0.468 / 0.418): res400 best on this
+   measure. Likely a noise-level effect at ±2 voxel tolerance rather than a
+   real resolution trend; treat as within-noise until repeated with different
+   seeds.
+
+Implication for capture guidelines: do not shoot below ~400²; from 400² up the
+model input resolution is the bottleneck, not the capture resolution, so extra
+pixels buy nothing.
+
 ## E2 status — COLMAP PatchMatch external baseline (in progress)
 
 - Windows COLMAP 4.2.1 CUDA binary (414 MB, verified `colmap -h`) crashes with

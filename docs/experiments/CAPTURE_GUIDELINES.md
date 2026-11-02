@@ -45,7 +45,7 @@ them (from the independent 34-render visual review):
 
 | Parameter | Recommendation | Evidence |
 |---|---|---|
-| Input resolution | VGGT runs at 512² model input; captures at ≥800² with the object filling the frame (all experiments). Sub-512 capture and upscaling are untested. | **[实测支持]** at ≥800²; **[未验证]** below |
+| Input resolution | Shoot at **400²–800²** with the object filling the frame; do NOT shoot below ~400². From 400² up, VGGT-Ω's own 512² model input dominates and extra pixels buy nothing (res400 / res512 / 800² anchor16 differ by ≤0.04% abs-rel, ≤0.4° normal). At 256² depth error grows +0.13pp and high-frequency "grit" RMS rises. | **[实测支持]** group 3 |
 | Focus / motion blur | must be sharp; blur robustness untested | **[未验证]** |
 | Exposure / highlights | avoid clipping (dataset-style studio lighting used in all experiments) | **[经验推断]** |
 | Lighting direction / shadows | single fixed soft key light used in the dataset; direction ablation untested | **[未验证]** |
