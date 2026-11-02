@@ -301,6 +301,18 @@ pure information-starvation variables (views, parallax) contribute almost
 nothing beyond ~16 views. The weak-texture effect (rho 0.095) is real but
 secondary; highlights are not a measurable failure mode at this scale.
 
+A direct density-by-quartile comparison (set8 vs set64 abs_rel within each
+covariate quartile) shows the gain is **largest exactly where information is
+scarce**: low-parallax Q1 −59%, low-incidence Q1 −44%, low-texture Q1 −42%,
+low-curvature Q1/Q2 −47%/−50%, far-from-edge Q4 −54%. In the *worst* buckets
+(discontinuity Q1 −20%, curvature Q4 −20%, parallax Q4 −24%) the gain is the
+smallest. This splits the failure modes cleanly:
+
+- **Information-starved pixels** (low parallax / grazing / weak texture /
+  far-from-edge flat areas): densification helps a lot → capture-side fix.
+- **Discontinuity-adjacent and high-curvature pixels**: densification helps
+  least → these are the network-prior / smoothing failures, geometry-side fix.
+
 Implication: capture can fix *flat / weak-texture / coverage* gaps (Q-A shows
 they respond), but the *edge_band / thin_sharp / high_curvature* family
 responds weakly to capture and is the natural target for a depth-side
