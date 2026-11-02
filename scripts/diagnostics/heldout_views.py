@@ -31,8 +31,7 @@ def prepare(args):
                 pose[:3,:3] = gt[:3,:3] @ rotation
                 pose[:3,3] = (gt[:3,:3] @ translation + gt[:3,3]) / scale
             else:  # source gauge: raw GT test cameras for meshes fused in source units
-                pose = np.eye(4)
-                pose[:3] = gt
+                pose = gt.copy()
             frames.append({"frame": name, "file": name, "K_original": k.tolist(), "K_model": k.tolist(),
                            "original_width": 800, "original_height": 800, "model_width": 800, "model_height": 800,
                            "T_world_to_cam": pose.tolist(), "pixel_affine_original_to_model": np.eye(3).tolist()})
