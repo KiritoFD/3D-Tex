@@ -27,6 +27,22 @@ def depth_normals(depth, k, radius=2):
     return normal, valid
 
 
+def regrid_depth(raw, u, v, mode="nearest"):
+    """Intrinsic-only resampling onto the GT K grid; nearest reproduces the P0 protocol."""
+    interpolation = {"nearest": cv2.INTER_NEAREST, "bilinear": cv2.INTER_LINEAR}[mode]
+    return cv2.remap(raw.astype(np.float32), u.astype(np.float32), v.astype(np.float32), interpolation)
+
+
+def edge_preserving_filter(depth, diameter=5, sigma_color=0.02, sigma_space=3.0):
+    """Bilateral filter restricted to interior pixels; boundary and background keep the input depth."""
+    mask = depth > 0
+    smooth = cv2.bilateralFilter(np.ascontiguousarray(depth.astype(np.float32)),
+                                 int(diameter), float(sigma_color), float(sigma_space))
+    interior = cv2.erode(mask.astype(np.uint8), np.ones((int(diameter), int(diameter)), np.uint8)) > 0
+    filtered = np.where(interior, smooth, depth)
+    return np.where(mask, filtered, 0).astype(np.float32)
+
+
 def topology(faces):
     edges = np.sort(np.vstack([faces[:, [0,1]], faces[:, [1,2]], faces[:, [2,0]]]), axis=1)
     _, counts = np.unique(edges, axis=0, return_counts=True)
@@ -42,6 +58,15 @@ def main():
     parser.add_argument("--optimized-geometry", default=None)
     parser.add_argument("--optimized-label", default="pred_pose_pgsr_depth")
     parser.add_argument("--only-optimized", action="store_true")
+    parser.add_argument("--regrid", choices=["nearest", "bilinear"], default="nearest",
+                        help="interpolation for the intrinsic-only depth regrid; nearest reproduces the P0 protocol")
+    parser.add_argument("--fusion-sample", choices=["nearest", "bilinear"], default="nearest",
+                        help="depth sampling inside TSDF fusion; nearest reproduces the P0 protocol")
+    parser.add_argument("--depth-filter", choices=["none", "bilateral"], default="none",
+                        help="optional edge-preserving filter on the raw predicted depth before regridding")
+    parser.add_argument("--bilateral-d", type=int, default=5)
+    parser.add_argument("--bilateral-sigma-color", type=float, default=0.02)
+    parser.add_argument("--bilateral-sigma-space", type=float, default=3.0)
     args = parser.parse_args()
     pred, gt, out = Path(args.predicted), Path(args.gt), Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -63,12 +88,15 @@ def main():
         stem = Path(frame["frame"]).stem
         reference = np.load(gt / "depth" / f"{stem}.npy")
         raw = np.load(pred / "depth" / f"{stem}.npy").squeeze() * scale
+        if args.depth_filter == "bilateral":
+            raw = edge_preserving_filter(raw, args.bilateral_d, args.bilateral_sigma_color,
+                                         args.bilateral_sigma_space)
         k, pk = np.asarray(frame["K_model"]), np.asarray(predictions[frame["frame"]]["K_model"])
         yy, xx = np.indices(reference.shape, dtype=np.float32)
         # Regrid only K; no per-view depth fitting or pose-dependent depth correction.
         u = (xx-k[0,2])/k[0,0]*pk[0,0]+pk[0,2]
         v = (yy-k[1,2])/k[1,1]*pk[1,1]+pk[1,2]
-        d = cv2.remap(raw.astype(np.float32), u.astype(np.float32), v.astype(np.float32), cv2.INTER_NEAREST)
+        d = regrid_depth(raw, u, v, args.regrid)
         foreground = np.load(gt / "foreground" / f"{stem}.npy")
         d = np.where(foreground, d, 0).astype(np.float32)
         gt_frames.append({"depth": reference, "K": k, "T": gts[index], "rgb": None})
@@ -91,7 +119,7 @@ def main():
         flat_errors.append(angle[flat])
         if args.optimized_geometry:
             optimized = np.load(Path(args.optimized_geometry) / "depth" / f"{stem}.npy").squeeze() * scale
-            optimized = cv2.remap(optimized.astype(np.float32), u.astype(np.float32), v.astype(np.float32), cv2.INTER_NEAREST)
+            optimized = regrid_depth(optimized, u, v, args.regrid)
             optimized = np.where(foreground, optimized, 0).astype(np.float32)
             optimized_frames.append({"depth": optimized, "K": k, "T": gts[index], "rgb": None})
             ov = (reference > 0) & (optimized > 0)
@@ -117,7 +145,8 @@ def main():
     if args.optimized_geometry:
         cases[args.optimized_label] = (aligned, optimized_frames)
     report = {"protocol": "diagnostic only; 16 training views, common GT K and foreground; one train-only Sim3, no per-view fit",
-              "predicted_depth_regrid": "nearest-neighbour intrinsic-only resampling onto GT K",
+              "predicted_depth_regrid": f"{args.regrid} intrinsic-only resampling onto GT K",
+              "fusion_sample_mode": args.fusion_sample, "depth_filter": args.depth_filter,
               "scale": float(scale), "rotation": rotation.tolist(), "translation": translation.tolist(),
               "voxel": float(voxel), "truncation": float(trunc), "origin": origin.tolist(), "shape": list(map(int, shape)),
               "cases": {}}
@@ -135,7 +164,8 @@ def main():
         folder.mkdir(exist_ok=True)
         frames = [dict(f, T=t) for f, t in zip(source_frames, poses)]
         started = time.time()
-        field, _, weight = fuse(origin, voxel, shape, trunc, frames, 0, 100, [None]*len(frames), "uniform", 64, 1)
+        field, _, weight = fuse(origin, voxel, shape, trunc, frames, 0, 100, [None]*len(frames), "uniform", 64, 1,
+                                sample_mode=args.fusion_sample)
         vertices, faces, normals = extract_surface(field, voxel)
         vertices += origin
         write_ply(folder / "mesh.ply", vertices, faces, np.full_like(vertices, .65), normals)

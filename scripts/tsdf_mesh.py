@@ -63,9 +63,41 @@ def unproject(frame: dict, rows: np.ndarray, cols: np.ndarray) -> np.ndarray:
     return (t[:3, :3].T @ (cam - t[:3, 3]).T).T
 
 
+def _sample_depth_bilinear(depth: np.ndarray, uf: np.ndarray, vf: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Bilinearly sample depth at float pixel coords, ignoring non-positive taps.
+
+    A sample is accepted only when the valid taps carry more than half of the total
+    bilinear weight, which prevents single-tap extrapolation at silhouette borders.
+    """
+    height, width = depth.shape
+    x0 = np.floor(uf).astype(np.int64)
+    y0 = np.floor(vf).astype(np.int64)
+    fx = uf - x0
+    fy = vf - y0
+    wsum = np.zeros(len(uf), dtype=np.float64)
+    dsum = np.zeros(len(uf), dtype=np.float64)
+    for dx in (0, 1):
+        for dy in (0, 1):
+            x = x0 + dx
+            y = y0 + dy
+            wt = (fx if dx else 1.0 - fx) * (fy if dy else 1.0 - fy)
+            inside = (x >= 0) & (x < width) & (y >= 0) & (y < height)
+            d = np.zeros(len(uf), dtype=np.float64)
+            d[inside] = depth[y[inside], x[inside]]
+            tap_ok = inside & np.isfinite(d) & (d > 0)
+            wsum += wt * tap_ok
+            dsum += d * wt * tap_ok
+    valid = wsum > 0.5
+    observed = np.zeros(len(uf), dtype=np.float64)
+    observed[valid] = dsum[valid] / wsum[valid]
+    return observed, valid
+
+
 def fuse(origin: np.ndarray, voxel: float, shape: tuple[int, int, int], sdf_trunc: float,
          frames: list[dict], near: float, far: float, confs: list[np.ndarray | None],
-         weight_mode: str, w_max: float, stride: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+         weight_mode: str, w_max: float, stride: int,
+         sample_mode: str = "nearest", robust: bool = False,
+         robust_delta: float = 0.3) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Fuse one observation per camera/voxel into a dense, chunked grid.
 
     Only voxels within +-sdf_trunc of an observed surface are updated (the standard TSDF
@@ -76,34 +108,63 @@ def fuse(origin: np.ndarray, voxel: float, shape: tuple[int, int, int], sdf_trun
     # Projective integration: one observation per voxel per frame, independent of
     # local depth sample density. Unknown voxels never contribute a signed distance.
     total = int(np.prod(shape))
-    wsum = np.zeros(total)
-    fsum = np.zeros(total)
-    csum = np.zeros((total, 3))
-    for frame, conf in zip(frames, confs):
+
+    def project(frame: dict, start: int):
+        """Voxel chunk -> per-voxel (flat index, z, observed depth, pixel coords, valid)."""
         depth, k, t = frame["depth"], frame["K"], frame["T"]
         height, width = depth.shape
-        for start in range(0, total, 200_000):
-            flat = np.arange(start, min(start + 200_000, total))
-            idx = np.stack(np.unravel_index(flat, shape), axis=-1)
-            pos = origin + (idx + 0.5) * voxel
-            cam = pos @ t[:3, :3].T + t[:3, 3]
-            z = cam[:, 2]
-            positive = z > 1e-6
-            u = np.rint(cam[:, 0] / np.maximum(z, 1e-6) * k[0, 0] + k[0, 2]).astype(int)
-            v = np.rint(cam[:, 1] / np.maximum(z, 1e-6) * k[1, 1] + k[1, 2]).astype(int)
-            inside = positive & (u >= 0) & (u < width) & (v >= 0) & (v < height)
-            flat, z, u, v = flat[inside], z[inside], u[inside], v[inside]
-            observed = depth[v, u]
-            good = np.isfinite(observed) & (observed > near) & (observed < far)
-            good &= np.abs(observed - z) <= sdf_trunc
-            flat, z, u, v, observed = flat[good], z[good], u[good], v[good], observed[good]
-            w = np.ones(len(flat)) if conf is None or weight_mode == "uniform" else np.clip(conf[v, u], 0.0, 8.0)
-            # Batch fusion averages every view before capping the reported support;
-            # reaching W_max must not silently discard all subsequent cameras.
-            wsum[flat] += w
-            fsum[flat] += w * (observed - z) / sdf_trunc
-            if frame["rgb"] is not None:
-                csum[flat] += w[:, None] * frame["rgb"][v, u] / 255.0
+        flat = np.arange(start, min(start + 200_000, total))
+        idx = np.stack(np.unravel_index(flat, shape), axis=-1)
+        pos = origin + (idx + 0.5) * voxel
+        cam = pos @ t[:3, :3].T + t[:3, 3]
+        z = cam[:, 2]
+        positive = z > 1e-6
+        uf = cam[:, 0] / np.maximum(z, 1e-6) * k[0, 0] + k[0, 2]
+        vf = cam[:, 1] / np.maximum(z, 1e-6) * k[1, 1] + k[1, 2]
+        u = np.rint(uf).astype(np.int64)
+        v = np.rint(vf).astype(np.int64)
+        if sample_mode == "bilinear":
+            observed, ok = _sample_depth_bilinear(depth, uf, vf)
+            valid = positive & ok
+        else:
+            valid = positive & (u >= 0) & (u < width) & (v >= 0) & (v < height)
+            observed = np.zeros(len(flat), dtype=np.float64)
+            observed[valid] = depth[v[valid], u[valid]]
+        valid &= np.isfinite(observed) & (observed > near) & (observed < far)
+        valid &= np.abs(observed - z) <= sdf_trunc
+        return flat, z, observed, u, v, valid
+
+    def integrate(frames, confs, estimate=None):
+        wsum = np.zeros(total)
+        fsum = np.zeros(total)
+        csum = np.zeros((total, 3))
+        for frame, conf in zip(frames, confs):
+            for start in range(0, total, 200_000):
+                flat, z, observed, u, v, valid = project(frame, start)
+                if estimate is not None:
+                    valid &= estimate[flat] > -np.inf
+                flat, z, observed, u, v = flat[valid], z[valid], observed[valid], u[valid], v[valid]
+                w = np.ones(len(flat)) if conf is None or weight_mode == "uniform" else np.clip(conf[v, u], 0.0, 8.0)
+                if estimate is not None:
+                    residual = (observed - z) / sdf_trunc - estimate[flat]
+                    mag = np.abs(residual)
+                    w = w * np.where(mag <= robust_delta, 1.0, robust_delta / np.maximum(mag, 1e-12))
+                # Batch fusion averages every view before capping the reported support;
+                # reaching W_max must not silently discard all subsequent cameras.
+                wsum[flat] += w
+                fsum[flat] += w * (observed - z) / sdf_trunc
+                if frame["rgb"] is not None:
+                    csum[flat] += w[:, None] * frame["rgb"][v, u] / 255.0
+        return wsum, fsum, csum
+
+    wsum, fsum, csum = integrate(frames, confs)
+    if robust:
+        # Second pass: Huber weights around the first-pass estimate, so views that
+        # disagree with the current consensus are down-weighted instead of averaged in.
+        estimate = np.full(total, -np.inf)
+        seen = wsum > 0
+        estimate[seen] = fsum[seen] / wsum[seen]
+        wsum, fsum, _ = integrate(frames, confs, estimate=estimate)
     known = wsum > 0
     field = np.full(total, np.nan, dtype=np.float32)
     field[known] = fsum[known] / wsum[known]
@@ -144,6 +205,12 @@ def main() -> None:
     parser.add_argument("--depth-min", type=float, default=None)
     parser.add_argument("--depth-trunc", type=float, default=None)
     parser.add_argument("--weight-mode", choices=["confidence", "uniform"], default="confidence")
+    parser.add_argument("--sample-mode", choices=["nearest", "bilinear"], default="nearest",
+                        help="depth sampling at the projected voxel position; nearest reproduces the original pipeline")
+    parser.add_argument("--robust", action="store_true",
+                        help="second Huber-weighted fusion pass around the first-pass TSDF estimate")
+    parser.add_argument("--robust-delta", type=float, default=0.3,
+                        help="Huber delta in truncated-TSDF units for --robust")
     parser.add_argument("--stride", type=int, default=2, help="legacy CLI option; projective fusion evaluates every voxel")
     parser.add_argument("--max-frames", type=int, default=0)
     parser.add_argument("--json", action="store_true")
@@ -190,7 +257,9 @@ def main() -> None:
 
     start = time.time()
     tsdf, colour, weight = fuse(lo, voxel, shape, sdf_trunc, frames, near, far, confs,
-                                args.weight_mode, 64.0, args.stride)
+                                args.weight_mode, 64.0, args.stride,
+                                sample_mode=args.sample_mode, robust=args.robust,
+                                robust_delta=args.robust_delta)
     observed = weight > 0
     print(f"[tsdf] {observed.sum()} voxels observed in {time.time() - start:.1f}s")
 
@@ -218,6 +287,8 @@ def main() -> None:
         "voxel": round(voxel, 6), "sdf_trunc": round(sdf_trunc, 6), "diagonal": round(diagonal, 4),
         "voxels_observed": int(observed.sum()), "depth_near": round(near, 4),
         "depth_far": round(far, 4), "weight_mode": args.weight_mode,
+        "sample_mode": args.sample_mode, "robust": bool(args.robust),
+        "robust_delta": args.robust_delta if args.robust else None,
         "mesh_ply": str(mesh_path), "mesh_ply_bytes": mesh_path.stat().st_size,
         "roi_geometry": str(args.roi_geometry) if args.roi_geometry else str(root),
     }
