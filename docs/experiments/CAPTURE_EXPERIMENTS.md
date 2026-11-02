@@ -211,6 +211,101 @@ Implication for capture guidelines: do not shoot below ~400²; from 400² up the
 model input resolution is the bottleneck, not the capture resolution, so extra
 pixels buy nothing.
 
+## Group 4 — pixel-level attribution (questions A and B)
+
+Method: for every GT foreground pixel we compute the depth residual of the
+predicted depth together with nine covariates (view count seeing the GT 3-D
+point, max parallax, incidence angle vs GT normal, image gradient, distance to
+silhouette, distance to GT depth discontinuity, GT curvature, interior-groove
+flag, near-clip highlight flag). Aggregating by mutually exclusive region
+classes gives question A; Spearman rho + quartile binning on the full pixel
+population gives question B. Pixel counts: ~400k per config.
+
+### Question A — which regions benefit from denser capture?
+
+abs_rel by region, per config (lower = better):
+
+| Config | flat | weak_texture | high_curvature | thin_sharp | edge_band | highlight |
+|---|---:|---:|---:|---:|---:|---:|
+| set8 | 0.0166 | 0.0160 | 0.0177 | **0.0343** | 0.0268 | 0.0127 |
+| set16 | 0.0121 | 0.0119 | 0.0144 | 0.0324 | 0.0231 | 0.0104 |
+| set32 | 0.0100 | 0.0099 | 0.0124 | 0.0310 | 0.0212 | 0.0144 |
+| set64 | **0.0088** | 0.0086 | 0.0118 | 0.0292 | **0.0196** | 0.0097 |
+| dualring24 | **0.0085** | 0.0092 | 0.0129 | 0.0319 | 0.0210 | **0.0033** |
+
+Density benefit (uniform ring set8 → set64):
+
+| Region | Δ abs_rel | Verdict |
+|---|---:|---|
+| flat | **−47.3%** | large benefit — extra views do help large flat areas |
+| weak_texture | **−46.4%** | large benefit |
+| high_curvature | −33.5% | moderate benefit |
+| edge_band | −26.8% | moderate benefit |
+| highlight | −23.7% | moderate benefit (small N; noisy) |
+| thin_sharp | −14.6% | **weak benefit** — density alone does not un-melt thin structures |
+
+Dualring vs set32 (24 elevation-diverse views vs 32 single-ring views, i.e.
+*fewer* images but better placed):
+
+| Region | Δ vs set32 | Verdict |
+|---|---:|---|
+| flat | **−14.3%** | elevation diversity wins on flat |
+| weak_texture | −7.5% | wins |
+| highlight | **−77.1%** | large win (small N) |
+| edge_band | −1.1% | parity |
+| thin_sharp | +2.8% | parity/slightly worse |
+| high_curvature | +4.6% | parity/slightly worse |
+
+**Answer A**: extra views pay off most on *flat* and *weak-texture* regions
+(the user-predicted "no benefit on flat" is wrong at the pixel level — flat
+shows the largest relative gain, −47%). Thin_sharp benefits least from raw
+density (−15%) and does not improve from elevation diversity either: thin
+structures are bounded by the depth estimation, not the capture. Edge_band
+sits in between. The capture-side lever that matters for thin structures is
+NOT count but incidence angle (see Q4 below).
+
+### Question B — where is VGGT-Ω worst, and why?
+
+Spearman rho between each covariate and per-pixel abs_rel (set32, ~400k
+pixels; sign gives direction):
+
+| Covariate | rho | q1→q4 abs_rel trend |
+|---|---:|---|
+| dist_to_discontinuity | **−0.282** | 0.0262 → 0.0088 (closer to an edge = worse) |
+| local_curvature | **+0.228** | 0.0100 → 0.0268 (curved = worse) |
+| parallax | +0.134 | 0.0114 → 0.0179 |
+| incidence | +0.123 | 0.0115 → 0.0179 (grazing = worse) |
+| img_grad | +0.095 | 0.0119 → 0.0181 |
+| dist_to_silhouette | +0.032 | flat |
+| view count | −0.025 | flat |
+| highlight / groove | ~0 | n/a |
+
+**Error-contribution ranking** (largest |rho| first):
+
+1. **Edge / discontinuity band** — pixels near GT depth discontinuities are
+   ~3× worse than the interior (0.026 vs 0.009). This is the *dominant* error
+   source, consistent with the visual "fluffy bridges" and "burr cloud".
+2. **Local curvature** — high-curvature pixels are 2.7× worse than low.
+3. **Grazing incidence** — pixels seen at grazing angles are 1.6× worse.
+4. **Image gradient** (weak texture) — weak but real.
+5. **View count / parallax / silhouette distance** — all ≪0.15; once the
+   object is reasonably covered, marginal coverage is not the limiting factor.
+
+**Mechanism attribution**: the two largest effects (discontinuity band and
+curvature) are *local shape properties*, not *capture* properties — view
+count, parallax and incidence are all far weaker. This is evidence for a
+**network prior / patch-level smoothing** failure mode: VGGT-Ω systematically
+smooths across depth discontinuities and rounds off high-curvature regions,
+so pixels there are biased regardless of how many views see them. By contrast,
+pure information-starvation variables (views, parallax) contribute almost
+nothing beyond ~16 views. The weak-texture effect (rho 0.095) is real but
+secondary; highlights are not a measurable failure mode at this scale.
+
+Implication: capture can fix *flat / weak-texture / coverage* gaps (Q-A shows
+they respond), but the *edge_band / thin_sharp / high_curvature* family
+responds weakly to capture and is the natural target for a depth-side
+refiner (P1) or a better multi-view matcher (E2).
+
 ## E2 status — COLMAP PatchMatch external baseline (in progress)
 
 - Windows COLMAP 4.2.1 CUDA binary (414 MB, verified `colmap -h`) crashes with

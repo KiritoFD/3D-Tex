@@ -54,10 +54,30 @@ normal error. Gap from the full-recall baseline: +0.08 F without losing recall.
 
 | Failure mode | Signature measured | Root cause | Candidate fix |
 |---|---|---|---|
+| Edge / discontinuity band smoothing | per-pixel abs_rel 0.026 (band) vs 0.009 (interior); Spearman rho −0.28 with dist-to-edge — *largest* error source | VGGT-Ω patch-level smoothing bleeds across depth discontinuities; capture-side fixes (more views) barely help | P1 RGB-guided depth refinement with edge-aware regularisation; E2 PatchMatch as external multi-view baseline |
+| High-curvature rounding | abs_rel rho +0.23 with GT curvature; curvature q4 is 2.7× q1 | network prior smooths curved regions | same as above |
 | Mid-frequency surface warp ("dunes", normal 32°) | smooth depth, 1.24% rel err, view-consistent | VGGT-Ω local shape bias | P1 RGB-guided depth refinement; E2 PatchMatch external baseline |
-| Melted thin structures (posts, studs, holes) | sharp-region accuracy 2–3 vox, P_sharp 0.19–0.28 | depth bias at high-curvature areas + TSDF thickening | same as above; capture diversity helps recall only |
+| Melted thin structures (posts, studs, holes) | sharp-region accuracy 2–3 vox, P_sharp 0.19–0.28; density benefit only −15% from 8→64 views | depth bias at high-curvature areas + TSDF thickening; capture density alone cannot un-melt | same as above; capture diversity helps recall only |
 | Pose/depth coupling | GT-pose+pred-depth (0.6021) ≈ pred-pose+pred-depth (0.6206) | entangled prediction | joint small refinement, not independent pose fixes (P0) |
 | Precision-vs-completeness trade | 2-voxel filter: F 0.6927 but recall 0.623 | consistency filtering deletes surface | adaptive per-pixel confidence, not harder thresholds |
+
+## Region-split evidence (capture vs geometry responsibility)
+
+Pixel-level attribution over ~400k GT pixels per config (group 4):
+
+| Region | abs_rel (set32) | Density benefit 8→64 | Fix lives in |
+|---|---:|---:|---|
+| flat | 0.0100 | **−47%** | capture (densify) |
+| weak_texture | 0.0099 | **−46%** | capture (densify) |
+| highlight | 0.0144 | −24% (small N) | capture (avoid highlights) |
+| high_curvature | 0.0124 | −33% | mixed |
+| edge_band | 0.0212 | −27% | **geometry** (smoothing prior) |
+| thin_sharp | 0.0310 | **−15%** | **geometry** (smoothing prior) |
+
+Regions above the "geometry" line barely respond to capture density; they are
+the natural target of P1 (depth refinement) and the benchmark for E2 (if a
+classical matcher beats VGGT-Ω there, the smoothing is a model property, not
+an information limit).
 
 ## Route comparison
 

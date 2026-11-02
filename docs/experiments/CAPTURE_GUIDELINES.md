@@ -32,14 +32,36 @@ them (from the independent 34-render visual review):
 
 ## Surface-type decision table
 
-| Surface type | Views (min) | Angular spacing | Extra close-ups | Evidence |
-|---|---|---|---|---|
-| Large flat planes (base plates) | ~24–32 | ≤12° | no | **[经验推断]** flat regions are the least damaged (flat accuracy ≈1.1–1.7 vox vs 2–3 vox sharp) |
-| High-curvature regions | ~32 | ≤12° | unknown | **[经验推断]** from global depth-error scaling |
-| Thin rods / thin walls / rims | more views do NOT help precision (measured); keep ≤~12° spacing and prefer elevation diversity | — | **[未验证]** |
-| Studs / holes / small concave features | as above; expect melting without geometry post-refinement | — | **[实测支持]** structure split in group 1 |
-| Weak-texture / glossy surfaces | untested | untested | **[未验证]** |
-| Deep holes / occluded grooves | untested | untested | **[未验证]** |
+Density benefit is measured in CAPTURE_EXPERIMENTS.md group 4 (pixel-level
+region attribution over ~400k pixels per config, uniform ring set8 → set64):
+
+| Surface type | Density benefit (8→64 views) | Recommended density | Evidence |
+|---|---:|---|---|
+| Large flat planes (base plates) | **−47% abs_rel** (large) | densify freely up to 32 views/ring; benefits flatten past that | **[实测支持]** group 4 |
+| Weak-texture / solid colour | **−46%** (large) | as above | **[实测支持]** group 4 |
+| High-curvature regions | −33% (moderate) | ~32 views; more helps a little | **[实测支持]** group 4 |
+| Edge / discontinuity band | −27% (moderate) | moderate; capture cannot fully fix this — see "failure regions" below | **[实测支持]** group 4 |
+| Highlights / near-clip | −24% (small N) | avoid highlights at capture; not a capture-density fix | **[实测支持]** group 4 |
+| Thin rods / sharp rims / studs | **−15% (weak)** | density alone does NOT recover these; use elevation diversity + depth-side refinement | **[实测支持]** groups 1 & 4 |
+| Grooves / interior holes | n/a (no GT pixels inside) | n/a — evaluated via hole_fill_rate structure metric instead | — |
+
+## VGGT-Ω failure regions and mechanism
+
+Failure-region ranking (Spearman |rho| vs per-pixel abs_rel, group 4 set32):
+
+| Rank | Covariate | rho | Failure mode |
+|---:|---|---:|---|
+| 1 | distance to depth discontinuity | −0.282 | fluffy bridges, burr cloud, melted rims — smoothing across edges |
+| 2 | local curvature | +0.228 | rounds off high-curvature regions |
+| 3 | parallax / incidence | +0.13 | grazing views slightly worse |
+| 4 | image gradient (weak texture) | +0.10 | weak but real |
+| 5+ | view count, parallax, silhouette distance | ≤0.13 | **not** the bottleneck once coverage ≥16 views |
+
+**Mechanism**: the two dominant failure modes (edges, curvature) are *local
+shape* properties, not *capture* properties — adding views barely changes
+their error. This is a **network-prior / patch-level smoothing** failure, not
+an information-shortage failure. Capture can fix coverage-side gaps (flat,
+weak-texture); geometry-side refinement must fix the edge/curvature family.
 
 ## Image parameters
 
