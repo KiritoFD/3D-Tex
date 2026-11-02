@@ -23,3 +23,7 @@ TSDF 平滑薄结构、受 pose/depth bias 影响，无法凭空恢复未观察�
 ## 迁移和验证
 
 现存 `run_all.sh` 变成**显式失败的旧入口**，禁止静默跑旧路线；历史代码可从 Git history 获取。新 pipeline 的具体步骤和 gate 定义见 [MESH_UV_PIPELINE.md](MESH_UV_PIPELINE.md)。待 Ω/TSDF/UV 真正验收后才能提供新的 end-to-end 一键命令。
+
+## 2026-11-02：用户授权的 PGSR 独立几何对照
+
+用户明确要求 P0 之后运行 PGSR 几何优化对照。适配器位于 `scripts/adapters/pgsr_geometry.py`，使用仓库外 ExMesh 携带的 PGSR 快照，训练和资产分别写入独立目录。实验结果与限制见 [P0_GEOMETRY_OPTIMIZATION.md](experiments/P0_GEOMETRY_OPTIMIZATION.md)。这次 16 视图对照的几何与 heldout Mesh 外观均退化，未作为默认质量改进路线。

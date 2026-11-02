@@ -18,6 +18,7 @@ def main():
     parser.add_argument("--out", required=True)
     parser.add_argument("--cameras", default="data/scenes/nerf_lego16/geometry/omega/cameras.json")
     parser.add_argument("--clay", action="store_true", help="plain lit geometry, without colour textures")
+    parser.add_argument("--view-indices", nargs="+", type=int, default=[0, 4, 8, 12])
     args = parser.parse_args(sys.argv[sys.argv.index("--") + 1:])
     out = Path(args.out).resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -70,7 +71,7 @@ def main():
     scene.render.image_settings.color_mode = "RGBA"
     scene.render.film_transparent = True
     frames = json.loads(Path(args.cameras).read_text())["frames"]
-    for index, fi in enumerate((0, 4, 8, 12)):
+    for index, fi in enumerate(args.view_indices):
         frame = frames[fi]
         data = bpy.data.cameras.new(f"camera_{index}")
         camera = bpy.data.objects.new(data.name, data)
@@ -94,7 +95,7 @@ def main():
         scene.render.pixel_aspect_y = k[0][0] / k[1][1]
         scene.render.filepath = str(out / f"view_{index}.png")
         bpy.ops.render.render(write_still=True)
-    scene.camera = bpy.data.objects["camera_2"]
+    scene.camera = bpy.data.objects.get("camera_2", camera)
     for screen in bpy.data.screens:
         for area in screen.areas:
             if area.type == "VIEW_3D":

@@ -17,6 +17,8 @@
 
 ## Technical design & papers
 
+- [P0 and geometry optimization](docs/experiments/P0_GEOMETRY_OPTIMIZATION.md): pose/depth isolation, completed PGSR comparison, voxel-scale filtering and heldout mesh checks. GitHub Actions workflows were removed on request; validation is run locally.
+
 - **[Mesh + UV implementation plan](docs/MESH_UV_PIPELINE.md)** — all stage contracts; robust depth fusion / TSDF / topology optimization / xatlas / visibility-aware texture baking / seam loss, tests and GPU gates.
 - **[2025–2026 SOTA comparison](docs/SOTA_2026.md)** — verified authors, institutions, venues, geometric/rendering/texturing results, code status, honest limitations.
 - **[VGGT-Ω adapter](docs/VGGT_OMEGA_ADAPTER.md)** — model API, lack of point-map head, K/pose/depth alignment, checkpoint version and RAM/VRAM budgets.

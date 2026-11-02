@@ -75,6 +75,9 @@ def main() -> None:
     parser.add_argument("--tau-abs", type=float, default=None,
                         help="absolute tolerance in scene units (default: 0.01 x camera span)")
     parser.add_argument("--tau-rel", type=float, default=0.05)
+    parser.add_argument("--voxel-size", type=float, default=None, help="scene-unit voxel size for residual diagnostics")
+    parser.add_argument("--max-voxel-error", type=float, default=None,
+                        help="use this many voxels as absolute tolerance, with zero relative tolerance")
     parser.add_argument("--min-agree", type=int, default=2, help="other views that must agree")
     parser.add_argument("--conf-quantile", type=float, default=0.0,
                         help="drop the lowest q fraction of confidence in each frame (0-1)")
@@ -87,6 +90,10 @@ def main() -> None:
     args = parser.parse_args()
     if args.mask_source == "files" and not args.mask_dir:
         parser.error("--mask-dir is required with --mask-source files")
+    if args.max_voxel_error is not None:
+        if args.voxel_size is None or args.voxel_size <= 0:
+            parser.error("--max-voxel-error requires positive --voxel-size")
+        args.tau_abs, args.tau_rel = args.voxel_size * args.max_voxel_error, 0.0
 
     scene = scene_path(args.scene)
     root = Path(args.geometry).resolve() if args.geometry else scene / "geometry" / "omega"
@@ -150,9 +157,11 @@ def main() -> None:
             frame_ok.reshape(-1)[np.nonzero(inside.ravel())[0][ok]] = True
             agree[i] += frame_ok
             if eligible.any():
-                per_pair.append({"from": names[i], "to": names[j],
-                                 "overlap": int(eligible.sum()),
-                                 "inlier_ratio": float(ok[eligible].mean())})
+                pair = {"from": names[i], "to": names[j], "overlap": int(eligible.sum()),
+                        "inlier_ratio": float(ok[eligible].mean())}
+                if args.voxel_size:
+                    pair["residual_voxels_median"] = float(np.median(np.abs(z[inside][eligible]-d_j[eligible]))/args.voxel_size)
+                per_pair.append(pair)
 
     keep = (agree >= args.min_agree) & valid_depth
 
@@ -182,6 +191,9 @@ def main() -> None:
         "pairs_total": len(per_pair),
         "pair_inlier_median": float(np.median(ratios)),
         "pair_inlier_domain": "valid foreground/confidence in both projected views",
+        "voxel_size": args.voxel_size, "max_voxel_error": args.max_voxel_error,
+        "pair_residual_voxels_median": float(np.median([p["residual_voxels_median"] for p in per_pair]))
+            if args.voxel_size and per_pair else None,
         "pair_inlier_p90": float(np.percentile(ratios, 90)),
         "kept_fraction_per_frame": [round(float(x), 4) for x in keep_frac],
         "kept_fraction_mean": float(keep_frac.mean()),

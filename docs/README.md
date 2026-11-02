@@ -2,6 +2,7 @@
 
 **Active target: no-Gaussian Mesh + UV from VGGT-Ω. The A0 path (Ω geometry → TSDF → mesh → ExMesh → OBJ/GLB) now runs end to end on ETH3D `kicker`; see [QUALITY_ATTRIBUTION.md](QUALITY_ATTRIBUTION.md) for what is verified and what is still weak.**
 
+0. **[P0_GEOMETRY_OPTIMIZATION.md](experiments/P0_GEOMETRY_OPTIMIZATION.md)** — pose/depth isolation, PGSR 10k negative result, voxel-scale filtering and untouched test-view measurements.
 0. **[GT_TSDF_DIAGNOSTIC.md](GT_TSDF_DIAGNOSTIC.md)** — direct ExMesh initialization research and source-GT depth TSDF comparison, with provenance, measurements and commands.
 0. **[PIPELINE_FIXES.md](PIPELINE_FIXES.md)** — corrected foreground, TSDF, cameras and texture pipeline; lego reproduction and honest quality limits.
 1. [MESH_UV_PIPELINE.md](MESH_UV_PIPELINE.md) — preferred architecture, mathematical data contract, TSDF filtering, mesh optimization alternatives, UV texturing, gate/metrics.

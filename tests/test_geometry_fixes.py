@@ -11,9 +11,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from exmesh_adapter import build_colmap, resize_intrinsics
 from geometry_masks import load_masks
 from tsdf_mesh import extract_surface, fuse
+from diagnostics.pose_depth_ablation import depth_normals
 
 
 class GeometryFixes(unittest.TestCase):
+    def test_depth_normal_operator_preserves_a_frontoparallel_plane(self):
+        k = np.array([[100.,0,16.],[0,100.,16.],[0,0,1.]])
+        normal, valid = depth_normals(np.ones((32,32)), k, radius=2)
+        self.assertEqual(int(valid.sum()), 28*28)
+        np.testing.assert_allclose(normal[valid, :2], 0, atol=1e-12)
+        np.testing.assert_allclose(normal[valid, 2], 1, atol=1e-12)
+
     def test_unknown_band_does_not_close_surface(self):
         field = np.full((8, 8, 8), np.nan, np.float32)
         field[2:6] = np.arange(4)[:, None, None] - 1.5

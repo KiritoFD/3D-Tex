@@ -136,6 +136,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Sparse TSDF fusion -> triangle mesh (A0)")
     parser.add_argument("--scene", required=True)
     parser.add_argument("--filtered", default=None, help="default <scene>/geometry/filtered")
+    parser.add_argument("--roi-geometry", default=None,
+                        help="derive bounds from these input depths, while fusing --filtered")
     parser.add_argument("--out", default=None, help="default <scene>/mesh")
     parser.add_argument("--voxel-div", type=int, default=256)
     parser.add_argument("--trunc-voxels", type=float, default=4.0)
@@ -168,8 +170,10 @@ def main() -> None:
         c = np.load(path) if path.is_file() else None
         confs.append(None if c is None else (c[..., 0] if c.ndim == 3 else c))
 
+    roi_frames = frames if args.roi_geometry is None else [
+        load_frame(c, Path(args.roi_geometry), scene) for c in cameras]
     clouds = []
-    for frame in frames:
+    for frame in roi_frames:
         rr, cc = np.nonzero((frame["depth"] > near) & (frame["depth"] < far))
         if len(rr):
             clouds.append(unproject(frame, rr, cc))
@@ -215,6 +219,7 @@ def main() -> None:
         "voxels_observed": int(observed.sum()), "depth_near": round(near, 4),
         "depth_far": round(far, 4), "weight_mode": args.weight_mode,
         "mesh_ply": str(mesh_path), "mesh_ply_bytes": mesh_path.stat().st_size,
+        "roi_geometry": str(args.roi_geometry) if args.roi_geometry else str(root),
     }
     (out / "mesh_report.json").write_text(json.dumps(stats, indent=2) + "\n")
     print(f"[topology] boundary edges {stats['boundary_edges']}, non-manifold {stats['nonmanifold_edges']}")

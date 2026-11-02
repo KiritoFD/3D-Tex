@@ -15,13 +15,7 @@ from mathutils import Vector
 from mathutils.bvhtree import BVHTree
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--source", required=True)
-    parser.add_argument("--scene", required=True)
-    args = parser.parse_args(sys.argv[sys.argv.index("--") + 1:])
-    source, scene = Path(args.source).resolve(), Path(args.scene).resolve()
-    bpy.ops.wm.open_mainfile(filepath=str(source), use_scripts=False)
+def source_bvh():
     depsgraph = bpy.context.evaluated_depsgraph_get()
     vertices, polygons, objects = [], [], []
     for instance in depsgraph.object_instances:
@@ -40,7 +34,17 @@ def main():
     print(json.dumps({"source_objects": len(objects), "vertices": len(vertices), "triangles": len(polygons),
                       "bbox": [xyz.min(0).tolist(), xyz.max(0).tolist()] }), flush=True)
     tree = BVHTree.FromPolygons(vertices, polygons, all_triangles=True)
-    del vertices, polygons
+    return tree, objects
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--source", required=True)
+    parser.add_argument("--scene", required=True)
+    args = parser.parse_args(sys.argv[sys.argv.index("--") + 1:])
+    source, scene = Path(args.source).resolve(), Path(args.scene).resolve()
+    bpy.ops.wm.open_mainfile(filepath=str(source), use_scripts=False)
+    tree, objects = source_bvh()
     root = scene / "geometry" / "gt"
     frames = json.loads((root / "cameras.json").read_text())["frames"]
     (root / "depth").mkdir(exist_ok=True)

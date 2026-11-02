@@ -1,3 +1,14 @@
+# P0 与几何优化对照（2026-11-02）
+
+- `lego_p0/comparison.png`：固定内参和体素网格的位姿/深度四组交叉诊断。
+- `lego_p0/optimization_comparison.png`：原有 ExMesh / 两体素过滤 / PGSR 对照。
+- `lego_omega_2vox/`：提高几何精度的筛选版，缺失面更多，heldout 外观下降。
+- `lego_pgsr/`、`lego_pgsr_consistent/`：PGSR 10k 及过滤版；保留负结果，不称作质量提升。
+
+PGSR 未使用 GT 位姿/深度/网格训练，但使用与先前相同的数据集 alpha 前景。P0 的 GT 只作诊断。完整指标和复现见 [P0_GEOMETRY_OPTIMIZATION.md](../docs/experiments/P0_GEOMETRY_OPTIMIZATION.md)。
+
+---
+
 # GT 深度 → TSDF 对照（2026-11-02）
 
 `lego_gt_tsdf/` 使用公开 lego Blender 源场景射线求交生成浮点 GT 深度，固定为相同 16 视角、512²、TSDF 256 分辨率；未过 ExMesh、未做表面平滑。
