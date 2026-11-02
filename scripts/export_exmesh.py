@@ -66,10 +66,14 @@ def main() -> None:
     (out / "mesh.mtl").write_text(
         "# ExMesh output material\n"
         "newmtl material_0\n"
-        "Ka 0.000 0.000 0.000\n"
-        "Kd 1.000 1.000 1.000\n"      # white so the baked albedo is not tinted down
+        # Blender's OBJ importer multiplies map_Kd by Kd; both must be white or the baked
+        # albedo gets darkened, which is what makes an atlas look "black" in the viewport.
+        # illum 1 (diffuse-only) avoids a shader that reacts to lights we did not bake.
+        "Ka 1.000 1.000 1.000\n"
+        "Kd 1.000 1.000 1.000\n"
         "Ks 0.000 0.000 0.000\n"
-        "d 1.0\nillum 2\n"
+        "Ns 0.0\n"
+        "d 1.0\nillum 1\n"
         f"map_Kd {args.texture_name}\n")
 
     with (out / "mesh.obj").open("w") as handle:
@@ -88,23 +92,22 @@ def main() -> None:
 
     glb_bytes = None
     try:
-        import trimesh
-        # trimesh only writes TEXCOORD_0 when the mesh's `visual.uv` length matches its
-        # VERTEX count. ExMesh's `uvs` is indexed per corner, so use the OBJ-style layout:
-        # expand positions to the per-corner array and keep one UV per new vertex.
-        from trimesh.visual.material import SimpleMaterial
-        corner_uv = uvs[uv_idx.reshape(-1)]
+        import glb_writer
+        # trimesh only writes TEXCOORD_0 when len(uv) == len(vertices); ExMesh UVs are indexed
+        # per corner, so expand to one vertex per corner.
         corner_pos = verts[faces.reshape(-1)]
-        remap = np.repeat(np.arange(len(faces)) * 3, 3)
-        new_faces = remap.reshape(-1, 3)
-        material = SimpleMaterial(image=Image.fromarray(texture))
-        visual = trimesh.visual.TextureVisuals(uv=corner_uv, material=material)
-        mesh = trimesh.Trimesh(vertices=corner_pos, faces=new_faces, visual=visual,
-                               process=False, validate=False)
-        mesh.export(str(out / "mesh.glb"))
-        glb_bytes = (out / "mesh.glb").stat().st_size
+        corner_uv = uvs[uv_idx.reshape(-1)]
+        new_faces = np.arange(len(corner_pos)).reshape(-1, 3)
+        glb_bytes = glb_writer.write_textured_glb(
+            out / "mesh.glb", corner_pos, new_faces, corner_uv,
+            Image.fromarray(texture))
+        check = glb_writer.verify_glb(out / "mesh.glb")
+        print(f"[glb] {check}")
+        if "TEXCOORD_0" not in check["attributes"] or check["baseColorFactor"] != [1.0, 1.0, 1.0, 1.0]:
+            raise RuntimeError(f"GLB material check failed: {check}")
     except Exception as exc:           # GLB is a convenience; OBJ is the contract
         print(f"[warn] GLB skipped: {type(exc).__name__}: {exc}")
+        glb_bytes = None
 
     stats = {
         "checkpoint": str(ckpt), "out": str(out),

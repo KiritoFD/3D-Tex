@@ -6,7 +6,9 @@
 > `VGGT-Ω → consistency filter → TSDF → mesh.ply → ExMesh → OBJ/MTL/albedo/GLB`.
 > [QUALITY_ATTRIBUTION.md](docs/QUALITY_ATTRIBUTION.md) records what is verified against
 > ETH3D ground truth (Ω poses 0.59% / 0.57°, focals −0.25%) and what is still weak
-> (12 of 25 views fit in 8 GiB, open boundaries, ExMesh only smoke-tested at 200 iters).
+> (12 of 25 views fit in 8 GiB, open boundaries, ExMesh only smoke-tested).
+> **Known defects and their fixes are itemised in [docs/ISSUES_2026_11_02.md](docs/ISSUES_2026_11_02.md)**;
+> the dominant open problem is background/sky being fused into a shell around the object.
 > `vggt_omega/` is a vendored source mirror of VGGT-Ω; the local `vggt/` remains the pinned
 > **original VGGT** (used only for its COLMAP exporter/legacy baseline). `2dsugar/` is a
 > retained optional historical reference; `3dgs/` is removed.

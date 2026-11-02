@@ -129,7 +129,10 @@ def main() -> None:
     # OBJ needs bottom-origin V; xatlas emits image-space V
     obj_uv = np.stack([uvs[:, 0], 1.0 - uvs[:, 1]], axis=1)
     (out / "mesh.mtl").write_text(
-        "newmtl material_0\nKa 0 0 0\nKd 1 1 1\nKs 0 0 0\nd 1.0\nillum 2\nmap_Kd albedo.png\n")
+        # Ka/Kd must stay white: Blender multiplies the image by Kd, so a grey Kd makes the
+        # whole atlas look dark/black in the viewport. illum 1 keeps it diffuse-only.
+        "newmtl material_0\nKa 1 1 1\nKd 1 1 1\nKs 0 0 0\nNs 0.0\nd 1.0\nillum 1\n"
+        "map_Kd albedo.png\n")
     with (out / "mesh.obj").open("w") as handle:
         handle.write("mtllib mesh.mtl\n")
         for x, y, z in new_xyz:
@@ -144,22 +147,18 @@ def main() -> None:
 
     glb = None
     try:
-        from trimesh.visual.material import SimpleMaterial
-        # Expand to one vertex per face corner: trimesh only emits TEXCOORD_0 when
-        # len(visual.uv) == len(vertices), and our UVs are per corner.
+        import glb_writer
+        # Expand to one vertex per face corner: glTF needs len(uv) == len(positions).
         corner_uv = obj_uv[indices.reshape(-1)]
-        # `indices` index the UV array, not the position array. xatlas's `vmapping` maps each output
-        # UV vertex back to its source position, so positions must be gathered through it.
-        position_of_uv = np.clip(vmapping, 0, len(new_xyz) - 1) if len(vmapping) == len(obj_uv) \
-            else np.arange(len(obj_uv)) % len(new_xyz)
-        corner_pos = new_xyz[position_of_uv][indices.reshape(-1)]
-        material = SimpleMaterial(image=image)
-        visual = trimesh.visual.TextureVisuals(uv=corner_uv, material=material)
-        textured = trimesh.Trimesh(
-            vertices=corner_pos, faces=np.arange(len(corner_pos)).reshape(-1, 3),
-            visual=visual, process=False, validate=False)
-        textured.export(str(out / "mesh.glb"))
-        glb = (out / "mesh.glb").stat().st_size
+        # `indices` index the output (UV) vertex array; `vmapping` maps those back to positions.
+        corner_pos = new_xyz[vmapping][indices.reshape(-1)]
+        glb = glb_writer.write_textured_glb(
+            out / "mesh.glb", corner_pos,
+            np.arange(len(corner_pos)).reshape(-1, 3), corner_uv, image)
+        check = glb_writer.verify_glb(out / "mesh.glb")
+        print(f"[glb] {check}")
+        if "TEXCOORD_0" not in check["attributes"] or check["baseColorFactor"] != [1.0, 1.0, 1.0, 1.0]:
+            raise RuntimeError(f"GLB material check failed: {check}")
     except Exception as exc:
         print(f"[warn] GLB skipped: {type(exc).__name__}: {exc}")
 

@@ -194,11 +194,18 @@ def main() -> None:
     backbone_low_memory = agg_dtype != torch.float32
     use_autocast = (device == "cuda") and not backbone_low_memory
     model = VGGTOmega(autocast=use_autocast).eval()
-    # weights_only=True avoids torch's mmap path, which fails on WSL DrvFs (/mnt/...) and is
-    # also stricter about what the checkpoint is allowed to execute.
-    state = torch.load(str(ckpt), map_location="cpu", weights_only=True)
-    model.load_state_dict(state)
-    del state
+    # Two separate platform problems bite when loading the 4.6 GiB checkpoint:
+    #   1. torch's default zip-mmap path raises OSError on WSL DrvFs (/mnt/...) and can die with
+    #      an access violation on native Windows. `mmap=False` reads it as a plain stream.
+    #   2. Holding the model (4.6 GiB fp32) AND the state dict (another 4.6 GiB) at once peaks
+    #      near 9 GiB of host RAM; on a 32 GiB laptop that is enough to make the allocator fail
+    #      inside a later `nn.Linear` with an access violation (reproduced). So load, copy into
+    #      the model, and free each tensor *as we go* instead of materialising the whole dict.
+    print("[load] streaming checkpoint into the model (low host-memory mode) ...", flush=True)
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    from scripts.torch_stream_loader import load_state_dict_streaming
+    print(f"[load] {load_state_dict_streaming(ckpt, model)} tensors copied", flush=True)
     model = model.to(device=device)
     if backbone_low_memory:
         model.aggregator.to(dtype=agg_dtype)

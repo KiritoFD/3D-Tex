@@ -78,6 +78,10 @@ def main() -> None:
     parser.add_argument("--min-agree", type=int, default=2, help="other views that must agree")
     parser.add_argument("--conf-quantile", type=float, default=0.0,
                         help="drop the lowest q fraction of confidence in each frame (0-1)")
+    parser.add_argument("--conf-threshold", type=float, default=0.0,
+                        help="absolute confidence cutoff. Unlike a per-frame quantile this is "
+                             "comparable across scenes: background/sky gets far lower Omega "
+                             "confidence than a real surface (measured ~3.7 vs ~28 on lego)")
     parser.add_argument("--max-frames", type=int, default=0)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
@@ -138,6 +142,8 @@ def main() -> None:
                              "overlap": int(inside.sum()), "inlier_ratio": float(ok.mean())})
 
     keep = agree >= args.min_agree
+    if args.conf_threshold > 0:
+        keep &= conf >= args.conf_threshold
     if args.conf_quantile > 0:
         cut = np.array([np.quantile(conf[i], args.conf_quantile) for i in range(count)])
         keep &= conf >= cut[:, None, None]
@@ -161,6 +167,7 @@ def main() -> None:
         "scene": args.scene, "frames": count, "image_size": [width, height],
         "camera_span": span, "tau_abs": tau_abs, "tau_rel": args.tau_rel,
         "min_agree": args.min_agree,
+        "conf_threshold": args.conf_threshold,
         "pairs_total": len(per_pair),
         "pair_inlier_median": float(np.median(ratios)),
         "pair_inlier_p90": float(np.percentile(ratios, 90)),
