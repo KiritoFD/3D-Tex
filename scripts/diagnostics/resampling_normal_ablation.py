@@ -61,9 +61,10 @@ def summarize(values):
 
 def part_a(pred, gt, out, scale, records, predictions, args):
     """Image-space depth/normal diagnosis; no fusion, no meshes."""
-    conditions = {name: {"rel": [], "angle": [], "flat": [], "edge": []}
-                  for name in ("regrid_nearest", "regrid_bilinear", "native_normal",
-                               "bilateral_regrid_nearest", "nearest_radius1")}
+    sigmas = [float(s) for s in args.parta_bilateral_sigmas.split(",")]
+    condition_names = (["regrid_nearest", "regrid_bilinear", "native_normal", "nearest_radius1"]
+                       + [f"bilateral_sc{sigma:g}" for sigma in sigmas])
+    conditions = {name: {"rel": [], "angle": [], "flat": [], "edge": []} for name in condition_names}
     native_grid_rel = []
     panels = []
     for index, frame in enumerate(records):
@@ -93,26 +94,32 @@ def part_a(pred, gt, out, scale, records, predictions, args):
         rel1, ang1, flat1, edge1, d1, map1, nv1 = measure(regrid_depth(raw, u, v, "nearest"))
         # A2: bilinear regrid.
         rel2, ang2, flat2, edge2, _, map2, nv2 = measure(regrid_depth(raw, u, v, "bilinear"))
-        # A4: edge-preserving bilateral filter on the native grid, then nearest regrid.
-        raw_filtered = edge_preserving_filter(raw, args.bilateral_d, args.bilateral_sigma_color,
-                                              args.bilateral_sigma_space)
-        rel4, ang4, flat4, edge4, _, map4, nv4 = measure(regrid_depth(raw_filtered, u, v, "nearest"))
+        # A4: edge-preserving bilateral filters on the native grid, then nearest regrid.
+        bilateral_results = {}
+        for sigma in sigmas:
+            raw_filtered = edge_preserving_filter(raw, args.bilateral_d, sigma,
+                                                  args.bilateral_sigma_space)
+            rel4, ang4, flat4, edge4, _, map4, nv4 = measure(regrid_depth(raw_filtered, u, v, "nearest"))
+            bilateral_results[sigma] = (rel4, ang4, flat4, edge4, map4, nv4)
         # A3: normals computed on the native Omega grid (never resampled), then sampled.
         native_normals, native_valid = depth_normals(raw, pk)
-        sampled = np.stack([cv2.remap(native_normals[..., c].astype(np.float32), u, v, cv2.INTER_LINEAR)
+        uf32, vf32 = u.astype(np.float32), v.astype(np.float32)
+        sampled = np.stack([cv2.remap(native_normals[..., c].astype(np.float32), uf32, vf32, cv2.INTER_LINEAR)
                             for c in range(3)], axis=-1)
         sampled /= np.maximum(np.linalg.norm(sampled, axis=-1, keepdims=True), 1e-12)
-        validity = cv2.remap(native_valid.astype(np.float32), u, v, cv2.INTER_LINEAR)
+        validity = cv2.remap(native_valid.astype(np.float32), uf32, vf32, cv2.INTER_LINEAR)
         nv3 = gv & (validity > 0.999)
         map3 = normal_angle(gn, sampled)
         ang3, flat3, edge3 = map3[nv3], map3[flat_gt & nv3], map3[edge_gt & nv3]
         # A5: A1 depth with a radius-1 stencil (operator sensitivity).
         _, ang5, flat5, edge5, _, _, _ = measure(regrid_depth(raw, u, v, "nearest"), radius=1)
-        for name, values in (("regrid_nearest", (rel1, ang1, flat1, edge1)),
-                             ("regrid_bilinear", (rel2, ang2, flat2, edge2)),
-                             ("native_normal", (None, ang3, flat3, edge3)),
-                             ("bilateral_regrid_nearest", (rel4, ang4, flat4, edge4)),
-                             ("nearest_radius1", (None, ang5, flat5, edge5))):
+        frame_values = [("regrid_nearest", (rel1, ang1, flat1, edge1)),
+                        ("regrid_bilinear", (rel2, ang2, flat2, edge2)),
+                        ("native_normal", (None, ang3, flat3, edge3)),
+                        ("nearest_radius1", (None, ang5, flat5, edge5))]
+        for sigma, (rel4, ang4, flat4, edge4, _, _) in bilateral_results.items():
+            frame_values.append((f"bilateral_sc{sigma:g}", (rel4, ang4, flat4, edge4)))
+        for name, values in frame_values:
             rel, ang, flt, edg = values
             if rel is not None:
                 conditions[name]["rel"].append(rel)
@@ -125,18 +132,22 @@ def part_a(pred, gt, out, scale, records, predictions, args):
         gvv = (gy - pk[1, 2]) / pk[1, 1] * k[1, 1] + k[1, 2]
         ref_on_native = cv2.remap(reference.astype(np.float32), gu.astype(np.float32),
                                   gvv.astype(np.float32), cv2.INTER_LINEAR)
-        fg_on_native = cv2.remap(foreground.astype(np.float32), gu.astype(np.float32),
-                                 gvv.astype(np.float32), cv2.INTER_NEAREST) > 0
-        nv6 = fg_on_native & (ref_on_native > 0)
+        # Require all four GT taps inside the foreground so silhouette zeros cannot
+        # bleed into the sampled reference depth and fabricate huge relative errors.
+        fg_weight = cv2.remap(foreground.astype(np.float32), gu.astype(np.float32),
+                              gvv.astype(np.float32), cv2.INTER_LINEAR)
+        nv6 = (fg_weight > 0.999) & (ref_on_native > 0)
         native_grid_rel.append(np.abs(raw[nv6] - ref_on_native[nv6]) / ref_on_native[nv6])
         if index in PANEL_FRAMES:
+            mid_sigma = sigmas[len(sigmas) // 2]
+            map4, nv4 = bilateral_results[mid_sigma][4], bilateral_results[mid_sigma][5]
             tiles = []
             for label, heat_map, valid_map, scale_max in (
                     (f"{stem} depth rel err (A1)", map1_placeholder(d1, reference), None, 0.05),
                     ("A1 nearest normal", map1, nv1, 45),
                     ("A2 bilinear normal", map2, nv2, 45),
                     ("A3 native normal", map3, nv3, 45),
-                    ("A4 bilateral normal", map4, nv4, 45)):
+                    (f"A4 bilateral sc{mid_sigma:g} normal", map4, nv4, 45)):
                 if heat_map is None:
                     heat_map = np.zeros_like(map1)
                 clipped = np.uint8(np.clip(heat_map / scale_max, 0, 1) * 255)
@@ -293,6 +304,8 @@ def main():
     parser.add_argument("--bilateral-d", type=int, default=5)
     parser.add_argument("--bilateral-sigma-color", type=float, default=0.02)
     parser.add_argument("--bilateral-sigma-space", type=float, default=3.0)
+    parser.add_argument("--parta-bilateral-sigmas", default="0.02,0.05,0.10",
+                        help="Part A sweeps these sigma_color values; Part B uses --bilateral-sigma-color")
     parser.add_argument("--robust-delta", type=float, default=0.3)
     args = parser.parse_args()
     pred, gt, out = Path(args.predicted), Path(args.gt), Path(args.out)
