@@ -187,13 +187,29 @@ resolution on VGGT-Ω depth, with zero change to trajectory, lighting, or TSDF.
 | res512 | 1.278% / 0.758% | 32.12 | 15.63 | 33.80 | 0.0103 | 0.0218 | 0.0191 | 0.985 | 0.418 |
 | anchor16 (800² baseline) | 1.242% / 0.701% | 32.16 | 15.61 | 33.86 | — | — | — | — | — |
 
+Mesh metrics (frozen P0 grid, measure_surfaces; anchor16 row = P0 baseline):
+
+| Config | F@1vox ↑ | P / R @1vox | accuracy (vox) ↓ | compl. (vox) ↓ | acc_sharp / acc_flat (vox) | P_sharp | R_sharp |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| res256 | 0.5726 | 0.514 / 0.646 | 1.548 | 0.894 | 2.194 / 1.197 | 0.295 | 0.644 |
+| res400 | **0.6299** | 0.576 / 0.695 | **1.322** | **0.813** | 1.996 / 1.010 | 0.335 | 0.681 |
+| res512 | 0.5954 | 0.537 / 0.668 | 1.436 | 0.856 | 2.087 / 1.083 | 0.317 | 0.695 |
+| anchor16 (800² baseline) | 0.6206 | 0.554 / 0.705 | 1.403 | 0.809 | — | — | — |
+
+Orientation split (accuracy vox by azimuth, worst/best sector): res256 1.94
+(0..45) / 1.35 (−90..−45); res400 1.58 (0..45) / 1.22 (−90..−45); res512 1.81
+(0..45) / 1.24 (−90..−45) — the 0..45 sector is worst at every resolution,
+same orientation non-uniformity as the other configs, resolution-independent.
+
 Findings:
 
 1. **Resolution axis is nearly flat from 400² up**: res400 and res512 sit within
    ~0.02–0.04% abs-rel of the 800² anchor16 baseline, and normal error matches
    to <0.4°. VGGT-Ω's 512² model input, not the capture resolution, is the
    dominant factor at these scales — 400² and 512² captures are upsampled by
-   the loader to 512² anyway.
+   the loader to 512² anyway. The mesh side agrees: res400 (F 0.6299) and
+   res512 (F 0.5954) bracket the anchor16 baseline (0.6206) — non-monotone and
+   within the same noise band as the coverage_rate flip, not a resolution trend.
 2. **res256 degrades measurably but modestly**: abs-rel +0.13pp (1.37% vs
    1.24%), normal +1.0°, edge normal +1.1°. High-frequency RMS rises the most
    (0.0233 vs ~0.0218): the finest "grit" component of the warp grows at very
@@ -340,6 +356,25 @@ anchor16: 268 s for 16 views; set32: 494 s for 32 views on the RTX 4070 laptop.
 | COLMAP PatchMatch (anchor16) | 2.305% / 0.891% / 3.341% | **24.43** | 0.066 | **0.206** | 0.0153 |
 | VGGT-Ω (set32) | 1.462% / 0.888% / — | 32.53 | — | 0.994 | — |
 | COLMAP PatchMatch (set32) | 2.698% / 1.098% / 3.420% | 32.63 | 0.264 | **0.611** | **0.0105** |
+
+Mesh metrics (frozen P0 grid, measure_surfaces; VGGT rows for reference):
+
+| Geometry | F@1vox ↑ | P / R @1vox | accuracy (vox) ↓ | compl. (vox) ↓ | acc_sharp / acc_flat |
+|---|---:|---:|---:|---:|---:|
+| VGGT-Ω (anchor16) | **0.6206** | 0.554 / **0.705** | 1.403 | **0.809** | — |
+| COLMAP PatchMatch (anchor16) | 0.1479 | 0.409 / 0.090 | 1.602 | 9.415 | 2.237 / 1.139 |
+| VGGT-Ω (set32) | **0.5352** | 0.460 / **0.639** | 1.813 | **0.906** | 2.583 / 1.362 |
+| COLMAP PatchMatch (set32) | 0.4015 | **0.719** / 0.279 | **0.882** | 3.764 | **1.555 / 0.638** |
+
+**Coverage-0.066 attribution (checked)**: the PatchMatch photometric depth maps
+are 100% valid on every frame; the `geom_consistency=true` maps used for the
+evaluation are only **2.5% (anchor16) / 5.7% (set32) valid pixels** — COLMAP's
+geometric consistency filter rejects nearly everything with 10–31 source views
+at default thresholds. The sparse coverage is therefore a *filtering* artefact,
+not a matching failure: where the filter commits, mesh accuracy is at or better
+than VGGT-Ω (set32: 0.882 vs 1.813 vox; sharp split 1.555 vs 2.583), and
+precision@1vox far higher (0.719 vs 0.460) — the loss is entirely recall.
+Not checked: whether relaxed filter thresholds keep the accuracy advantage.
 
 PatchMatch is roughly twice as bad on abs-rel as VGGT-Ω on the same views
 (anchor16: 2.31% vs 1.24%; set32: 2.70% vs 1.46%) and its depth is much

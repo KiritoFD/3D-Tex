@@ -67,7 +67,7 @@ weak-texture); geometry-side refinement must fix the edge/curvature family.
 
 | Parameter | Recommendation | Evidence |
 |---|---|---|
-| Input resolution | Shoot at **400²–800²** with the object filling the frame; do NOT shoot below ~400². From 400² up, VGGT-Ω's own 512² model input dominates and extra pixels buy nothing (res400 / res512 / 800² anchor16 differ by ≤0.04% abs-rel, ≤0.4° normal). At 256² depth error grows +0.13pp and high-frequency "grit" RMS rises. | **[实测支持]** group 3 |
+| Input resolution | Shoot at **400²–800²** with the object filling the frame; do NOT shoot below ~400². From 400² up, VGGT-Ω's own 512² model input dominates and extra pixels buy nothing (res400 / res512 / 800² anchor16 differ by ≤0.04% abs-rel, ≤0.4° normal; mesh side confirms it — F@1vox res400 0.6299 / res512 0.5954 bracketing the anchor16 baseline 0.6206, non-monotone i.e. noise-level). At 256² depth error grows +0.13pp, high-frequency "grit" RMS rises, and mesh F drops to 0.5726. | **[实测支持]** group 3 |
 | Focus / motion blur | must be sharp; blur robustness untested | **[未验证]** |
 | Exposure / highlights | avoid clipping (dataset-style studio lighting used in all experiments) | **[经验推断]** |
 | Lighting direction / shadows | single fixed soft key light used in the dataset; direction ablation untested | **[未验证]** |
