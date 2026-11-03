@@ -383,6 +383,32 @@ multi-view photometric consistency, rather than replacing it.
   .bin→npy) → `capture_eval.py --geometry-dir` (skips Sim3/regrid, resizes
   800²→512² INTER_NEAREST onto the GT K grid).
 
+## Handoff for the next session
+
+Done this session (commits newest first):
+- E2 COLMAP PatchMatch anchor16 + set32 (this commit): abs_rel / normals /
+  coverage / hole_fill / burr all measured; route comparison updated.
+- Capture group 4 — pixel-level attribution (`scripts/diagnostics/pixel_attribution.py`
+  + `density_by_covariate.py`): answers Q-A (density benefit per region) and
+  Q-B (error-contribution ranking + mechanism) with per-covariate quartile
+  gain analysis set8 vs set64.
+- Capture group 3 — resolution axis (256/400/512 vs anchor16 800²).
+- Mechanism evidence + guidelines / geometry doc updates.
+
+Blocked / pending axes (unchanged): renderer axes (lighting, blur, texture,
+re-render at new resolutions) — EEVEE access-violates and Cycles-GPU init
+crashes on this host, so these remain **[未验证]** in CAPTURE_GUIDELINES.
+
+Next steps, in priority order:
+1. P1 depth refinement (the E2 finding "PatchMatch normals better where it
+   commits but coverage/abs_rel much worse" points at VGGT-Ω-as-prior +
+   multi-view photometric refinement as the natural next experiment).
+2. Optional: per-region measure_surfaces runs for the res256/400/512 outputs
+   to add F-score / accuracy to the resolution table (currently only
+   capture_eval metrics are reported there).
+3. Optional: measure_surfaces for the E2 colmap outputs if F-score comparison
+   on the mesh side is wanted (currently only image-space metrics reported).
+
 ## Blocked/pending axes
 
 - New-render axes (lighting direction/shadow, defocus/motion blur, texture,

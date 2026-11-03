@@ -83,8 +83,8 @@ an information limit).
 
 | Route | Expected gain | Cost | When to switch |
 |---|---|---|---|
-| P1: multi-view photometric depth refinement (Omega depth as prior, ZNCC/SSIM + normal/depth-prior regularisation) | directly targets the measured warp; literature (EG 2025) supports the formulation | medium (custom optimisation loop) | **main line, start now** |
-| E2: COLMAP PatchMatch with VGGT poses → depth → same TSDF/eval | independent multi-view measurement; answers "is RGB matching better than Omega depth" | low (existing tools) | run in parallel; if it beats Omega depth on the same views, prioritise depth fusion by confidence |
+| P1: multi-view photometric depth refinement (Omega depth as prior, ZNCC/SSIM + normal/depth-prior regularisation) | directly targets the measured warp; E2 anchor16 shows classical matching is better where it commits (normals 24° vs 32°); literature (EG 2025) supports the formulation | medium (custom optimisation loop) | **main line, start now** |
+| E2: COLMAP PatchMatch with VGGT poses → depth → same TSDF/eval | **measured**: abs-rel 2× worse (2.31% vs 1.24% anchor16; 2.70% vs 1.46% set32), coverage 6.6–26% (vs ~100%), but normals better at 16 views and hole_fill much lower (0.21 vs 0.99 anchor16) — does NOT melt windows/lattice | measured (done) | measured; informs P1 design — refine VGGT-Ω depth with multi-view consistency instead of replacing it |
 | URGT (CVPR 2026) refinement | normal-error oriented refiner; needs gauge handling for z-depth | medium | after E2, if depth-refinement direction validates |
 | GeoSVR / ADELE | stronger geometry representation (sparse voxels / adaptive tetrahedra) | high | only if depth-side fixes plateau below target |
 | ExMesh continuation | bounded by initial geometry quality | medium | not before depth improves; 10k already at F 0.6190 |
