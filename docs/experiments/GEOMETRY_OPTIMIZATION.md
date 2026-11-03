@@ -97,6 +97,7 @@ an information limit).
 | E2: COLMAP PatchMatch with VGGT poses → depth → same TSDF/eval | **measured**: abs-rel 2× worse (2.31% vs 1.24% anchor16; 2.70% vs 1.46% set32), coverage 6.6–26% (vs ~100%), but normals better at 16 views and hole_fill much lower (0.21 vs 0.99 anchor16) — does NOT melt windows/lattice; mesh side: where the geometric-consistency filter commits (only 2.5–5.7% of pixels), set32 accuracy 0.882 vox vs VGGT 1.813, precision 0.719 vs 0.460 — recall is the entire loss | measured (done) | measured; motivated the gated-sparse-update, which was then measured neutral (E2-followup row) |
 | URGT (CVPR 2026) refinement | normal-error oriented refiner; needs gauge handling for z-depth | medium | after E2, if depth-refinement direction validates |
 | E2-followup: gate threshold sweep + sparse gated fusion (VGGT base, COLMAP depth only on gate pixels) | **measured neutral** (P1_DEPTH_REFINEMENT.md Follow-up A): knee at cost2_nc2 (3.7% coverage @ 2.34% abs_rel, collapse at cost3 → 14.8% @ 10.8%); fusion at trustworthy gates (≤4.4% px) is exactly neutral (F 0.619–0.621 vs 0.621), looser gates monotonically harmful (F down to 0.48); COLMAP abs_rel > VGGT at every level, and 3–4% of pixels is too sparse to move the TSDF surface | measured (done) | closed — depth-value photometric direction fully ruled out |
+| Tiling probe + mixed-trajectory fusion (Follow-up D) | **probe positive, fusion negative**: structure loss is effective-resolution (crop/mixed runs restore stud arrays, rims, spokes; edge normals −6°); mixed full+close-up sets stay anchored (0.048) while crop-only sets break trajectory (×8). BUT fusing crop depth into the voxel TSDF fails in all four rules tried (coexist 0.5775 / adjudicate 0.5653 / replace 0.4969 / internally-consistent 0.4886 vs 0.6315 target): crop depth's absolute placement resists sub-voxel registration (p90 23% disagreement, not pose-shaped) | measured (done) | capture-side: adopt mixed full+close-up capture; fusion-side: closed — crop depth is an anchor source for Phase B, not TSDF input |
 | **Geometry-side supervision, no photometric loss (Follow-up C)** | **measured working trade**: cross-view free-space carving (votes+confirms, aligned gauge) + VGGT confidence-weighted fusion. Monotone trade curve: F 0.6207→0.6398, P 0.554→0.617, R 0.705→0.664, acc 1.403→1.230 vox, burr −39%, window holes genuinely open (hole_fill 0.985→0.753), P_sharp 0.326→0.371; deleted pixels ~2× enriched for wrong geometry, completeness pays proportionally; near-free point v35c30+conf (F 0.6315, burr −21%, IoU +0.001). Crater untouched; studs/rods not recoverable by deletion | measured (done) | adopt v35c30+conf as default fusion; aggressive points documented |
 | **B: Mesh Splatting (ICLR 2026) with added geometric supervision** | representation-side route now that the depth-value direction is closed; DMTet stage permits topology changes (the only tested route family that can re-open window holes / re-connect rods); RGB+normal losses must be augmented with depth/silhouette/free-space anchors to avoid repeating the P1 failure | medium-high (plan below; feasibility probe done — **no public code found**, re-check before starting) | **next main line** |
 | GeoSVR / ADELE | stronger geometry representation (sparse voxels / adaptive tetrahedra) | high | only if depth-side fixes plateau below target |
@@ -141,6 +142,14 @@ layer set; K=3–5 layers still fits 8 GiB. Runtime estimate: minutes per run.
   reduces a toy target), all on Windows torch. If nvdiffrast/pytorch3d cannot
   be installed on this host in one attempt, fall back to WSL (proven pattern),
   and if that fails too, stop — subset is dead.
+  **M1 PASSED (2026-11-03)**: nvdiffrast has no Windows PyPI wheel (would need
+  an MSVC source build; pytorch3d likewise), so the fallback was used — a
+  pure-torch tile-bucketed soft rasterizer (`outputs/m1_spike/m1_rasterizer.py`)
+  renders soft depth+alpha of the 406k-tri baseline mesh with gradients to
+  vertices: **24/24 finite-difference sign agreements** (magnitudes within
+  ~10%), peak VRAM 0.14 GiB (< 3 GiB budget), ~70 s total at 256². M2 may
+  proceed with this renderer; nvdiffrast remains an optional speed upgrade via
+  source build if the custom path proves too slow at 512².
 - **M2 (anchor run)**: baseline mesh + anchor losses only (no RGB, no
   softening), 300–800 iters. Acceptance: F@1vox ≥ the v35c30+conf reference
   (0.6315) with structure survival not worse; burr ↓ without new fringe.

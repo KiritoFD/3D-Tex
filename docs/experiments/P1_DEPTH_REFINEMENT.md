@@ -516,3 +516,40 @@ Images: `outputs/tiling/vis/{roofwin,wheels}_{r_0,r_13,r_33}_normals_gt_base_til
    anchors for Phase B; per-region TSDF fusion at the frozen voxel with
    mixed-run crop depth as a replacement for baseline depth in structure
    regions (needs a consistency rule for the boundary).
+
+## D.5 Mixed-trajectory fusion attempt (negative result, 2026-11-03)
+
+Goal: turn the mixed run's crop depth into fused geometry (F ≥ v35c30+conf
+0.6315 target). Pipeline (`scripts/mixed_fusion.py`): crop pose := matching
+full view's pose (+ optional multi-view refinement), intrinsics := shifted
+full K, depth := crop depth × robust overlap scalar, then fused through the
+frozen protocol (48-frame merged GT: 16 full + 32 crop frames).
+
+Alignment measurements: scalar alone leaves median 8.4% mismatch (initially
+miscomputed correspondence; after fixing, 1.1% median / 3.1% p90 against the
+own view). The multi-view refinement (register crop points against all 16
+full views, robust 10% gate) reaches median ~3.5–3.7% but **p90 stays ~23%**:
+the disagreement tail is not pose-shaped — it is the crop run's own
+fine-scale shape error at structure boundaries, unfixable by any pose
+correction.
+
+Fusion variants through the identical eval (mixed 48-frame GT set):
+
+| Variant | F@1vox | P / R | acc (vox) | compl (vox) | Note |
+|---|---:|---:|---:|---:|---|
+| target: v35c30+conf (16-frame GT) | 0.6315 | 0.581 / 0.692 | 1.350 | 0.837 | — |
+| coexist (crop ×4 weight, anchor16 full) | 0.5775 | 0.501 / 0.682 | 1.662 | 0.853 | double-sheets in conflict areas |
+| adjudicate (mutual exclusion by conf) | 0.5653 | 0.485 / 0.678 | 1.688 | 0.868 | kill-mask makes it worse |
+| replace (crop rules the whole rectangle) | 0.4969 | 0.404 / 0.644 | 2.074 | 0.936 | crop surface alone is misplaced |
+| consistent (mixed-run full + crops) | 0.4886 | 0.477 / 0.501 | 1.644 | 1.194 | mixed full depth is worse; recall collapses |
+
+**Conclusion: mixed-trajectory crop fusion into the voxel TSDF is not viable.**
+The crop depth carries excellent local structure (Follow-up D: studs/spokes
+in normals) but its *absolute surface placement* cannot be registered to the
+full trajectory at sub-voxel accuracy: the multi-view refinement fixes the
+median (~1–3.7%) while the structure-carrying tail (p90 ~23%) is not
+pose-shaped and resists any registration. Every fusion rule either
+double-sheets the surface (coexist/adjudicate) or imports the offset surface
+(replace). This is the depth-value level again: photometric-free registration
+cannot rescue it. The crop data remains useful as *anchors* for Phase B
+(where an optimizer can move the surface), not as direct TSDF input.
