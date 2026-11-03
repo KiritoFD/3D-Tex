@@ -16,6 +16,21 @@ from diagnostics.pose_depth_ablation import depth_normals
 
 
 class GeometryFixes(unittest.TestCase):
+    def test_observation_weights_preserve_scale_and_thin_mask(self):
+        from fusion.observation_weights import observation_factor
+        depth = np.ones((17, 17), np.float32)
+        k = np.array([[30., 0, 8], [0, 30., 8], [0, 0, 1]])
+        mask = np.ones_like(depth, dtype=bool)
+        a = observation_factor(depth, k, mask, "combined")
+        b = observation_factor(depth * 7, k, mask, "combined")
+        np.testing.assert_allclose(a, b, atol=1e-6)
+        self.assertAlmostEqual(float(a[8, 8]), 1.)
+        mask[:] = False
+        mask[:, 8] = True
+        thin = observation_factor(depth, k, mask, "combined")
+        self.assertTrue((thin[mask] > 0).all())
+        self.assertTrue((thin[~mask] == 0).all())
+
     def test_lattice_preserves_translation_and_channel_order(self):
         import torch
         from mesh_opt.geometry import make_lattice, lattice_offsets

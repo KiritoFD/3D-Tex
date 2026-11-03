@@ -123,3 +123,6 @@ Torch constraint、freeze、import 状态和安装日志在 `outputs/mesh_splatt
 已在新环境重建并再次通过前后向/alpha 有限差分（`full_spike/spike.json`）。
 真实训练入口已前进到缺少 `torch_scatter`；tinycudann、torch_scatter、DTU/法线准备
 及完整训练仍未完成。
+
+后续更新见[观测加权与训练环境](OBSERVATIONS_AND_RUNTIME.md)：scatter CUDA、
+tinycudann HashGrid 前后向及真实训练入口已通过；DTU/法线和完整训练仍未完成。

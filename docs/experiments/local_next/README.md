@@ -125,11 +125,17 @@ COLMAP 在当前配置没有超过单纯 B1；不继续默认叠加损失。
 
 ## 下一步（目标保持开放）
 
-1. 抑制直接顶点更新的高频碎皱：先试平滑/低维形变或形状正则，再考虑软化与拓扑；
-   同时保留 A512 和 native 前后对照，不能只追求 F。
-2. 完成固定 Probe 的输入 LOO；融合 oracle 已有收益，但跨场景无 GT 预测仍未成立。
-3. 按[文献审计与采集矩阵](RESEARCH_AUDIT.md) 实施固定帧数的有效视差、结构分辨率、背景对照。
-   跨物体、3 seeds、416-reproduction 和正式 DTU 基线未完成，不能写成已验证拍摄规范。
+补充：[观测加权实测与完整训练环境](OBSERVATIONS_AND_RUNTIME.md)。预测原生融合的
+incidence/boundary/combined 三组均未通过联合门槛，不替换默认；scatter CUDA 已通过，
+tinycudann HashGrid 前后向和实际 `train.py --help` 已通过。DTU/单目法线与官方完整训练未完成。
+
+1. 打通官方 Mesh Splatting 完整训练入口与标准 DTU 数据/单目法线，先保留原损失基线，
+   再考虑软化与拓扑修改。低维形变 L4/L8 已测，仍未同时保住 R/Sharp R。
+2. 固定 Probe 的输入 LOO 已完成 24/24；融合 oracle 已有收益，但跨场景无 GT 预测仍未成立。
+   观测加权三组失败候选不继续调参；多视图一致性/free-space 权重仍开放。
+3. 采集首轮固定帧数对照已完成，排名对对齐敏感，不能形成可迁移拍摄规范。
+   继续按[文献审计](RESEARCH_AUDIT.md) 补真实结构有效像素/成像条件、跨物体、3 seeds、
+   416-reproduction；原 512 权重输入 768 不能代替高分辨率训练或局部 crop 实验。
 
 复现入口：`configs/experiments/local_mesh.json`、`scripts/experiments/local_mesh.py`；
 原生输入 `prediction_smoke.py`；Mesh 直接评估 `scripts/mesh_opt/evaluate.py`；
