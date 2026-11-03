@@ -696,6 +696,26 @@ def cmd_score(args):
 
 # ----------------------------------------------------------------------------- loo
 
+def loo_inference_flags(reference):
+    """Freeze numerical settings to the full run, rather than infer's auto defaults."""
+    dtype = {"torch.bfloat16": "bfloat16", "torch.float32": "fp32"}[
+        reference["aggregator_dtype"]]
+    return ["--aggregator-dtype", dtype,
+            "--image-resolution", str(reference["image_resolution_requested"]),
+            "--seed", str(reference["seed"])]
+
+
+def validate_loo_protocol(omega, reference):
+    actual = json.loads((Path(omega) / "manifest.json").read_text())
+    for key in ("aggregator_dtype", "heads_dtype", "image_resolution_requested",
+                "model_width", "model_height", "seed"):
+        if actual[key] != reference[key]:
+            raise ValueError(f"LOO protocol mismatch in {omega}: {key}: "
+                             f"{actual[key]} != {reference[key]}; use a fresh work directory")
+    if actual["checkpoint"]["sha256"] != reference["checkpoint"]["sha256"]:
+        raise ValueError(f"LOO checkpoint mismatch in {omega}")
+
+
 def cmd_loo(args):
     """Leave-one-out over the views of one base run dir.
 
@@ -713,6 +733,10 @@ def cmd_loo(args):
     work.mkdir(parents=True, exist_ok=True)
     frames = json.loads((base / "geometry" / "omega" / "cameras.json").read_text())["frames"]
     stems = [Path(f["frame"]).stem for f in frames]
+    reference = json.loads((base / "geometry" / "omega" / "manifest.json").read_text())
+    inference_flags = loo_inference_flags(reference)
+    for cached in work.glob("minus_*.json"):
+        validate_loo_protocol(work / cached.stem / "omega", reference)
 
     if args.phase == "run":
         todo = [s for s in stems if not (work / f"minus_{s}.json").is_file()]
@@ -722,9 +746,10 @@ def cmd_loo(args):
             cmd = [sys.executable, str(Path(__file__).resolve()), "infer",
                    "--run-dir", str(base), "--out", str(out), "--checkpoint", str(args.checkpoint),
                    "--exclude", s, "--min-free-gib", str(args.min_free_gib),
-                   "--wait-seconds", str(args.wait_seconds)]
+                   "--wait-seconds", str(args.wait_seconds), *inference_flags]
             print(f"[loo] --- drop {s} ---", flush=True)
             subprocess.run(cmd, check=True)
+            validate_loo_protocol(out, reference)
             eval_out = work / f"minus_{s}.json"
             retained = [x for x in stems if x != s]
             result = eval_geometry(out, gt, retained)
@@ -753,12 +778,14 @@ def cmd_loo(args):
                        "--run-dir", str(base), "--out", str(out),
                        "--checkpoint", str(args.checkpoint), "--exclude", ",".join(drop),
                        "--min-free-gib", str(args.min_free_gib),
-                       "--wait-seconds", str(args.wait_seconds)]
+                       "--wait-seconds", str(args.wait_seconds), *inference_flags]
                 print(f"[loo-joint] --- {name}: drop {drop} ---", flush=True)
                 subprocess.run(cmd, check=True)
+                validate_loo_protocol(out, reference)
                 retained = [x for x in stems if x not in set(drop)]
                 result = eval_geometry(out, gt, retained)
                 (work / f"joint_{name}.json").write_text(json.dumps(result, indent=2) + "\n")
+            validate_loo_protocol(out, reference)
             result = json.loads((work / f"joint_{name}.json").read_text())
             retained = [x for x in stems if x not in set(drop)]
             ref = [x for x in retained if x in set(anchor)] or retained
@@ -813,9 +840,10 @@ def cmd_loo(args):
     boot = [float(np.mean(rng.choice(deltas, size=len(deltas), replace=True))) for _ in range(2000)]
     report = {"protocol": "Delta_i = E(S) - E(S\\{i}) on the retained 31 views; "
                           "Delta > 0 means the dropped view was a net NEGATIVE contributor; "
-                          "the 31 deletions are the exhaustive k=1 distribution, so the "
-                          "equal-count random control is their own mean/spread (bootstrap CI)",
+                          "only a complete sweep is the exhaustive k=1 random-deletion control",
               "n_views": len(stems), "n_deletions": len(rows),
+              "complete": len(rows) == len(stems),
+              "inference_protocol": reference,
               "delta_abs_rel": {"mean": float(deltas.mean()), "std": float(deltas.std()),
                                 "min": float(deltas.min()), "max": float(deltas.max()),
                                 "bootstrap_mean_ci95": [float(np.percentile(boot, 2.5)),

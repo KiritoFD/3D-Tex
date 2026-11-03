@@ -111,6 +111,9 @@ def main():
     parser.add_argument("--out", required=True)
     parser.add_argument("--p0-out", default="deliverables/lego_p0")
     parser.add_argument("--fusion-sample", choices=["nearest", "bilinear"], default="nearest")
+    parser.add_argument("--exclude-fusion-stems", default="",
+                        help="comma-separated views omitted only from fusion; retain all "
+                             "cameras for Sim3 and all GT observations for evaluation")
     parser.add_argument("--geometry-dir", default=None,
                         help="geometry root to evaluate; default <capture>/geometry/omega. "
                              "Depth must be camera z-depth on the GT camera grid (800^2)")
@@ -133,6 +136,10 @@ def main():
     shape = tuple(p0["shape"])
 
     records = json.loads((gt / "cameras.json").read_text())["frames"]
+    excluded = set(filter(None, args.exclude_fusion_stems.split(",")))
+    stems = [Path(f["frame"]).stem for f in records]
+    if excluded - set(stems) or len(excluded) == len(stems):
+        raise ValueError("fusion exclusions must be known views and retain at least one view")
     predictions = {f["frame"]: f for f in json.loads((pred / "cameras.json").read_text())["frames"]}
     gts = np.asarray([f["T_world_to_cam"] for f in records])
     if args.geometry_dir:
@@ -210,6 +217,9 @@ def main():
         edge_all.append(angle[gt_edge_mask(reference) & nv])
 
     started = time.time()
+    keep = [i for i, stem in enumerate(stems) if stem not in excluded]
+    frames = [frames[i] for i in keep]
+    confs = [confs[i] for i in keep]
     if args.weight_mode == "confidence":
         p99 = float(np.percentile(np.concatenate([c[c > 0] for c in confs if c is not None]), 99))
         confs = [c * (8.0 / max(p99, 1e-9)) if c is not None else None for c in confs]
@@ -244,6 +254,8 @@ def main():
         "voxel": voxel, "truncation": trunc, "origin": origin.tolist(), "shape": list(map(int, shape)),
         "fusion_sample": args.fusion_sample,
         "weight_mode": args.weight_mode,
+        "excluded_fusion_stems": sorted(excluded),
+        "alignment_views": len(records),
         "depth_on_gt_grid": {"abs_rel": summarize(rel),
                              "normal_deg": summarize(np.concatenate(ang_all)),
                              "normal_deg_flat": summarize(np.concatenate(flat_all)),

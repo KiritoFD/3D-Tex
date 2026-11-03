@@ -1,7 +1,8 @@
 # View Selection: per-view marginal contribution to VGGT-Ω geometry
 
 Status: core groups (E0/E1/E2) and extreme groups B1–B4/B6 measured end-to-end;
-B5 (unrelated views) inferred; LOO + random controls running. **Headline: adding
+B5 (unrelated views) evaluated; the initial LOO sweep was stopped due to a
+precision mismatch (see audit below), with matched-bf16 reruns required. **Headline: adding
 neutral views does NOT interfere with the model's depth on the core views; the
 mesh damage from "more views" happens at the fusion stage (precision dilution).
 Extreme/grazing views are the exception — they DO interfere.**
@@ -116,7 +117,7 @@ Image space (E1-style: error on A's 16 reference views; E0 = 1.242% / 32.16°):
 | B3 appearance proxy | 1.192% | −0.05pp | 31.92 | 0.353 |
 | B4 extreme | **1.395%** | **+0.15pp** | **32.71** | 0.332 |
 | B6 high value | **1.362%** | **+0.12pp** | 32.28 | 0.342 |
-| B5 unrelated | pending | | | |
+| B5 unrelated | **17.252%** | **+16.01pp** | **46.82** | **11.579** |
 
 Mesh (c16 = fuse only A's depths from that run; full = fuse all 32):
 
@@ -158,17 +159,52 @@ measured on the **retained 31 views** (all have GT):
 
     Δ_i = E(S) − E(S\{i})      (mean abs-rel / normal° over the retained views)
 
-Δ_i > 0 ⇔ view i was a net *negative* contributor. Secondary reference: A-core
-views only (cross-i comparability). The 31 single deletions are the exhaustive
+Δ_i > 0 ⇔ view i was a net *negative* contributor. Secondary reference: retained A-core
+views only (their count changes if a core view is removed). The 32 single deletions are the exhaustive
 k=1 distribution, so the equal-count random-deletion control is their own
 mean/spread (bootstrap CI reported) — no extra GPU runs are burned re-sampling a
 subset of itself. A joint-deletion check (drop all flagged views at once vs the same
 number of random views) tests the known caveat that two redundant views can be
 individually removable but not jointly.
 
-### Results
+### Results / protocol audit (2026-11-03, 18:45 CST)
 
-pending
+**No valid individual negative-contributor ranking yet.** Eight deletion runs
+completed (`r_0,r_1,r_13,r_15,r_20,r_23,r_24,r_26`), but their manifests record
+`aggregator_dtype=torch.float32`, whereas the full AB baseline records
+`torch.bfloat16`. LOO's subprocess omitted `--aggregator-dtype`; `auto` picked
+fp32. Any apparent improvement mixes numerical precision with view deletion.
+Those files remain under `outputs/viewsel/loo` for audit and are excluded from
+the conclusions. The active process tree was stopped before further wasted runs.
+
+Fix: `loo_inference_flags` inherits dtype, image resolution and seed from the
+full-run manifest; `validate_loo_protocol` rejects cached or new exports with a
+different dtype, heads dtype, resolution, model grid, seed or checkpoint hash.
+The same rule applies to joint deletion. Regression check covers inherited
+bf16 flags and rejection of a cached fp32 export. Correct reruns use a fresh
+`outputs/viewsel/loo_bf16` directory. Partial tabulations explicitly report
+`complete=false`; their mean is not an exhaustive random-deletion control.
+
+The group results above remain valid: E0/E1/E2 and B1–B6 full exports use the
+matched bf16 protocol. B5 is a stress test containing foreign scene images;
+it demonstrates severe interference but does not calibrate a normal-capture
+rejection threshold. Its 16 core views reach abs-rel 17.252%, normal 46.82°,
+and relative rotation error 11.579° (`outputs/viewsel/b5_eval.json`).
+
+### Next: distinguish removing an input from omitting its fusion contribution
+
+Keep AB's full 32-view prediction and all 32 camera centres for the same Sim3.
+Omit only four views from TSDF, chosen by the lowest no-GT foreground
+cross-view reprojection inlier ratio: `r_53,r_42,r_26,r_32` (0.294–0.315).
+Compare against equal-count seeded random exclusions and full E2, retaining
+the same observed GT point set, voxel grid and all-view structure evaluation.
+This tests fusion selection without rerunning VGGT or changing the alignment.
+It is distinct from input LOO, which changes model predictions too.
+
+`capture_eval.py --exclude-fusion-stems` implements this control and records
+the excluded stems and alignment-view count. No GT depth error is used to
+choose the four views. The diagnostic still uses GT foreground/grid as in P0,
+so a positive result would not yet establish an end-to-end deployment gain.
 
 ## Deployable view-selection signals (no GT)
 
@@ -226,3 +262,7 @@ blender -b --disable-autoexec --python scripts/diagnostics/measure_surfaces.py -
 .venv/Scripts/python.exe scripts/view_selection.py loo --phase run --base data/scenes/viewsel/runs/ab --gt data/scenes/viewsel/cases/e2/geometry/gt --work outputs/viewsel/loo
 .venv/Scripts/python.exe scripts/view_selection.py loo --phase tabulate --base data/scenes/viewsel/runs/ab --gt ... --work outputs/viewsel/loo --scores outputs/viewsel/scores_ab.json
 ```
+
+For the corrected sweep, replace `--work outputs/viewsel/loo` with
+`--work outputs/viewsel/loo_bf16` in both commands. Supply `--anchor-stems`
+with the comma-separated `anchor16` list from `selection.json` for core references.

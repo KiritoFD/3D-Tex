@@ -1,5 +1,6 @@
 """Small regressions for foreground, camera export and unknown TSDF boundaries."""
 import sys
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,6 +16,22 @@ from diagnostics.pose_depth_ablation import depth_normals
 
 
 class GeometryFixes(unittest.TestCase):
+    def test_loo_inherits_precision_and_rejects_mixed_cached_exports(self):
+        from view_selection import loo_inference_flags, validate_loo_protocol
+        reference = dict(aggregator_dtype="torch.bfloat16", heads_dtype="float32",
+                         image_resolution_requested=512, model_width=512, model_height=512,
+                         seed=42, checkpoint={"sha256": "same-checkpoint"})
+        self.assertEqual(loo_inference_flags(reference),
+                         ["--aggregator-dtype", "bfloat16", "--image-resolution", "512",
+                          "--seed", "42"])
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = Path(tmp) / "manifest.json"
+            manifest.write_text(json.dumps(reference))
+            validate_loo_protocol(tmp, reference)
+            manifest.write_text(json.dumps(dict(reference, aggregator_dtype="torch.float32")))
+            with self.assertRaisesRegex(ValueError, "aggregator_dtype"):
+                validate_loo_protocol(tmp, reference)
+
     def test_depth_normal_operator_preserves_a_frontoparallel_plane(self):
         k = np.array([[100.,0,16.],[0,100.,16.],[0,0,1.]])
         normal, valid = depth_normals(np.ones((32,32)), k, radius=2)
