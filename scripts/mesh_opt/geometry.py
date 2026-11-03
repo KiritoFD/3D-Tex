@@ -39,3 +39,23 @@ def tolerance_loss(rendered, initial, confidence, valid, epsilon, voxel):
     loss = F.huber_loss(excess, torch.zeros_like(excess), delta=1, reduction="none")
     weight = confidence * valid
     return (weight * loss).sum() / weight.sum().clamp(min=1)
+
+
+def make_lattice(vertices, voxel, spacing_voxels):
+    """Fixed trilinear sampling coordinates; parameters are displacements in voxels."""
+    if spacing_voxels <= 0:
+        raise ValueError("lattice spacing must be positive")
+    spacing = voxel * spacing_voxels
+    low = vertices.amin(0) - spacing
+    dims = torch.ceil((vertices.amax(0) - low) / spacing).long() + 2
+    high = low + (dims - 1) * spacing
+    grid = (2 * (vertices - low) / (high - low) - 1)[None, :, None, None, :].detach()
+    nx, ny, nz = dims.tolist()
+    field = torch.zeros((1,3,nz,ny,nx), dtype=vertices.dtype,
+                        device=vertices.device, requires_grad=True)
+    return field, grid
+
+
+def lattice_offsets(field, grid):
+    return F.grid_sample(field, grid, mode="bilinear", padding_mode="border",
+                         align_corners=True)[0, :, :, 0, 0].T.contiguous()

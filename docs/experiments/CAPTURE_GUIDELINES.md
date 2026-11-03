@@ -11,6 +11,11 @@ with a static background was tested. Historical `burr_rate` values used an
 incorrect vertical projection; corrected comparisons are in the
 [local results](local_next/README.md).
 
+The [completed local capture audit](local_next/CAPTURE_RESULTS.md) finds that
+an image-fixed textured-background proxy and naive 512→768 inference both hurt
+this checkpoint. Other group rankings can flip with Sim3 fitting sets; these
+results do not establish a transferable background/trajectory rule.
+
 Scope: evidence-backed capture rules derived from controlled experiments on the
 NeRF-Synthetic Lego scene (GT geometry, VGGT-Omega 1B 512, frozen P0 evaluation
 protocol). Every rule is labelled **[实测支持]** (measured), **[经验推断]**

@@ -9,6 +9,12 @@ continuation reuses matching exports. Current evidence and caveats:
 describe the earlier investigation. Old burr numbers are invalid after the cy/fy fix;
 F/P/R remain valid.
 
+**Latest:** fixed-probe Input LOO completed 24/24; a same-input 32-view rerun is
+bit-identical in depth and poses. Every single deletion improves probe AbsRel
+by a small amount, which still confounds view identity with 32→31 context length.
+No tested score survives 11-way Bonferroni correction. See
+[completed results and baseline audit](local_next/CAPTURE_RESULTS.md).
+
 Status: core groups (E0/E1/E2) and extreme groups B1–B4/B6 measured end-to-end;
 B5 (unrelated views) evaluated; the initial LOO sweep was stopped due to a
 precision mismatch (see audit below), with matched-bf16 reruns required. **Headline: adding

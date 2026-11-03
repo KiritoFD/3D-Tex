@@ -9,6 +9,12 @@ forward/backward probe; full DTU/DMTet/remeshing reproduction is still pending.
 Historical burr values use the pre-fix vertical projection and are invalid;
 this does not invalidate the distance/recall metrics.
 
+Smooth lattice displacement has also been measured: F 0.7024–0.7041 with lower
+mesh normal error, but sharp recall drops 0.6935→0.664–0.666. It is not adopted.
+See [lattice tradeoffs](local_next/LATTICE_AND_CAPTURE.md) and the
+[capture/alignment audit](local_next/CAPTURE_RESULTS.md); mesh scores from
+different Sim3 fitting sets must not be mixed.
+
 Purpose: which geometry route fits which failure mode, expected gain, cost, and
 the trigger signals for switching. Cross-references: capture-side avoidable
 issues are in `docs/experiments/CAPTURE_GUIDELINES.md`; raw data in

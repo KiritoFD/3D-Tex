@@ -14,6 +14,9 @@
     "B2_256": {"out": "outputs/m2/local_B2_256", "lambda-prior": 0.1, "tolerance-voxels": 2},
     "B4_256": {"out": "outputs/m2/local_B4_256", "lambda-prior": 0.1, "tolerance-voxels": 4},
     "C2_256": {"out": "outputs/m2/local_C2_256", "lambda-prior": 0.1, "tolerance-voxels": 2, "lambda-colmap": 0.1},
-    "A512": {"out": "outputs/m2/local_A512", "resolution": 512}
+    "A512": {"out": "outputs/m2/local_A512", "resolution": 512},
+    "L8_256": {"out": "outputs/m2/local_L8_256", "lambda-prior": 0.1, "tolerance-voxels": 1, "deformation": "lattice", "lattice-spacing-voxels": 8},
+    "L16_256": {"out": "outputs/m2/local_L16_256", "lambda-prior": 0.1, "tolerance-voxels": 1, "deformation": "lattice", "lattice-spacing-voxels": 16},
+    "L4_256": {"out": "outputs/m2/local_L4_256", "lambda-prior": 0.1, "tolerance-voxels": 1, "deformation": "lattice", "lattice-spacing-voxels": 4}
   }
 }

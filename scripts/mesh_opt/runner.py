@@ -9,7 +9,8 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from mesh_opt.geometry import displacement_loss, regularizer_graph, tolerance_loss
+from mesh_opt.geometry import (displacement_loss, regularizer_graph, tolerance_loss,
+                               make_lattice, lattice_offsets)
 from mesh_opt.inputs import load_views
 
 
@@ -41,6 +42,8 @@ def main():
     parser.add_argument("--anchor-gate-voxels", type=float, default=4.)
     parser.add_argument("--seed", type=int, default=20261103)
     parser.add_argument("--print-every", type=int, default=25)
+    parser.add_argument("--deformation", choices=["vertex", "lattice"], default="vertex")
+    parser.add_argument("--lattice-spacing-voxels", type=float, default=8.)
     args = parser.parse_args()
     if args.voxel_size <= 0 or args.resolution % 16:
         raise ValueError("positive voxel-size and resolution divisible by 16 required")
@@ -55,13 +58,18 @@ def main():
     faces = torch.tensor(faces_np, dtype=torch.int64, device=device)
     faces_i32 = faces.to(torch.int32).contiguous()
     # Optimise dimensionless voxel offsets; equal step semantics in either gauge.
-    offsets = torch.zeros_like(initial, requires_grad=True)
+    if args.deformation == "lattice":
+        parameter, grid = make_lattice(initial, args.voxel_size, args.lattice_spacing_voxels)
+        get_offsets = lambda: lattice_offsets(parameter, grid)
+    else:
+        parameter = torch.zeros_like(initial, requires_grad=True)
+        get_offsets = lambda: parameter
     with torch.no_grad():
         edges, degree, weights = regularizer_graph(initial, faces)
     views, provenance = load_views(args, device)
     depths = torch.cat([v["depth"][v["depth"] > 0] for v in views])
     renderer = NvdRenderer(near=float(depths.min()) * .2, far=float(depths.max()) * 3)
-    opt = torch.optim.Adam([offsets], lr=args.lr)
+    opt = torch.optim.Adam([parameter], lr=args.lr)
     omega_manifest = json.loads((Path(args.omega) / "manifest.json").read_text())
     log = {"args": vars(args), "provenance": provenance,
            "working_tree_diff_sha256": hashlib.sha256(subprocess.check_output(
@@ -72,16 +80,20 @@ def main():
            "model": omega_manifest.get("checkpoint"),
            "precision": {"optimisation": "float32", "initial_geometry": omega_manifest.get("aggregator_dtype")},
            "inputs": [v["name"] for v in views], "torch": torch.__version__,
-           "gpu": torch.cuda.get_device_name(), "renderer": "nvdiffrast", "iters": []}
+           "gpu": torch.cuda.get_device_name(), "renderer": "nvdiffrast",
+           "parameter_shape": list(parameter.shape), "iters": []}
     (out / "manifest.json").write_text(json.dumps(log, indent=2) + "\n")
     torch.cuda.reset_peak_memory_stats()
     started = time.time()
     for it in range(args.iters):
         opt.zero_grad()
+        offsets = get_offsets()
+        model_vertices = initial + args.voxel_size * offsets
+        # Accumulate image gradients on one vertex leaf, then backpropagate once
+        # through the deformation map. This avoids 16 retained grid-sampling graphs.
+        vertices = model_vertices.detach().requires_grad_(True)
         values = dict(sil=0., fs=0., prior=0., colmap=0.)
         for view in views:
-            # Rebuild this cheap expression per backward: no retained cross-view graph.
-            vertices = initial + args.voxel_size * offsets
             depth, alpha = renderer.render_frame(vertices, faces_i32, view["k"], view["t"], args.resolution)
             fg = view["fg"]
             terms = {"sil": (alpha - fg.float()).abs().mean(),
@@ -98,21 +110,23 @@ def main():
             for key, val in terms.items():
                 values[key] += float(val.detach()) / len(views)
         reg = displacement_loss(offsets, edges, degree, weights, 1.)
-        (args.lambda_reg * reg).backward()
+        torch.autograd.backward([model_vertices, args.lambda_reg * reg],
+                                [vertices.grad, None])
         values["reg"] = float(reg.detach())
-        if not torch.isfinite(offsets.grad).all():
+        if not torch.isfinite(parameter.grad).all():
             raise FloatingPointError(f"nonfinite vertex gradient at iteration {it + 1}")
         opt.step()
         if it == 0 or (it + 1) % args.print_every == 0 or it + 1 == args.iters:
-            delta = offsets.detach().norm(dim=1)
+            current = get_offsets().detach()
+            delta = current.norm(dim=1)
             row = {"iter": it + 1, **values,
                    "loss": sum(getattr(args, f"lambda_{k}") * val for k, val in values.items()),
                    "delta_mean_voxels": float(delta.mean()), "delta_p90_voxels": float(delta.quantile(.9)),
                    "delta_max_voxels": float(delta.max()),
-                   "mean_shift_voxels": offsets.detach().mean(0).tolist()}
+                   "mean_shift_voxels": current.mean(0).tolist()}
             log["iters"].append(row)
             print(json.dumps(row), flush=True)
-    final = (initial + args.voxel_size * offsets.detach()).cpu().numpy()
+    final = (initial + args.voxel_size * get_offsets().detach()).cpu().numpy()
     write_ply(out / "mesh_m2.ply", final, faces_np, np.full_like(final, .65), np.zeros_like(final))
     log["seconds"] = round(time.time() - started, 2)
     log["peak_vram_gb"] = round(torch.cuda.max_memory_allocated() / 2**30, 3)

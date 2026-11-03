@@ -114,6 +114,8 @@ def main():
     parser.add_argument("--exclude-fusion-stems", default="",
                         help="comma-separated views omitted only from fusion; retain all "
                              "cameras for Sim3 and all GT observations for evaluation")
+    parser.add_argument("--alignment-stems", default="",
+                        help="fixed comma-separated reference views for Sim3; default all input views")
     parser.add_argument("--geometry-dir", default=None,
                         help="geometry root to evaluate; default <capture>/geometry/omega. "
                              "Depth must be camera z-depth on the GT camera grid (800^2)")
@@ -138,6 +140,10 @@ def main():
     records = json.loads((gt / "cameras.json").read_text())["frames"]
     excluded = set(filter(None, args.exclude_fusion_stems.split(",")))
     stems = [Path(f["frame"]).stem for f in records]
+    alignment_stems = set(filter(None, args.alignment_stems.split(","))) or set(stems)
+    if not alignment_stems <= set(stems) or len(alignment_stems) < 3:
+        raise ValueError("alignment requires at least three known reference views")
+    align_indices = [i for i, stem in enumerate(stems) if stem in alignment_stems]
     if excluded - set(stems) or len(excluded) == len(stems):
         raise ValueError("fusion exclusions must be known views and retain at least one view")
     predictions = {f["frame"]: f for f in json.loads((pred / "cameras.json").read_text())["frames"]}
@@ -154,7 +160,7 @@ def main():
         pts = np.asarray([predictions[f["frame"]]["T_world_to_cam"] for f in records])
         gc = -np.einsum("sji,sj->si", gts[:, :3, :3], gts[:, :3, 3])
         pc = -np.einsum("sji,sj->si", pts[:, :3, :3], pts[:, :3, 3])
-        scale, rotation, translation = umeyama(pc, gc)
+        scale, rotation, translation = umeyama(pc[align_indices], gc[align_indices])
         aligned = pts.copy()
         aligned[:, :3, :3] = pts[:, :3, :3] @ rotation.T
         aligned[:, :3, 3] = scale * pts[:, :3, 3] - aligned[:, :3, :3] @ translation
@@ -255,7 +261,8 @@ def main():
         "fusion_sample": args.fusion_sample,
         "weight_mode": args.weight_mode,
         "excluded_fusion_stems": sorted(excluded),
-        "alignment_views": len(records),
+        "alignment_views": len(align_indices),
+        "alignment_stems": sorted(alignment_stems),
         "depth_on_gt_grid": {"abs_rel": summarize(rel),
                              "normal_deg": summarize(np.concatenate(ang_all)),
                              "normal_deg_flat": summarize(np.concatenate(flat_all)),

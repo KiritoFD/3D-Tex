@@ -81,10 +81,8 @@ def pick_aggregator_dtype(preference: str, device: str) -> "torch.dtype":
 
 def file_sha256(path: Path) -> tuple[str, int]:
     """Hash the checkpoint once so the manifest pins exactly which weights produced this."""
-    digest = hashlib.sha256()
     with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(16 * 1024**2), b""):
-            digest.update(block)
+        digest = hashlib.file_digest(handle, "sha256")
     return digest.hexdigest(), path.stat().st_size
 
 

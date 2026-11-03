@@ -34,17 +34,22 @@ import time
 import zipfile
 from pathlib import Path
 
-import numpy as np
-
 SCRIPTS = Path(__file__).resolve().parent
 ROOT = SCRIPTS.parent
 for extra in (SCRIPTS, SCRIPTS / "diagnostics", SCRIPTS / "adapters"):
     if str(extra) not in sys.path:
         sys.path.insert(0, str(extra))
 
-from verify_scene import umeyama  # noqa: E402
-from pose_depth_ablation import depth_normals, regrid_depth  # noqa: E402
-from resampling_normal_ablation import gt_edge_mask, gt_flat_mask, normal_angle, summarize  # noqa: E402
+def load_numerics():
+    """Keep the LOO coordinator small while its inference subprocess holds the model."""
+    global np, umeyama, depth_normals, regrid_depth
+    global gt_edge_mask, gt_flat_mask, normal_angle, summarize
+    if "np" in globals():
+        return
+    import numpy as np
+    from verify_scene import umeyama
+    from pose_depth_ablation import depth_normals, regrid_depth
+    from resampling_normal_ablation import gt_edge_mask, gt_flat_mask, normal_angle, summarize
 
 DATASET = ROOT / "data" / "scenes" / "nerf_lego"
 DATASET_ZIP = ROOT / "data" / ".cache" / "nerf-syn" / "nerf_syn.zip"
@@ -437,6 +442,13 @@ def cmd_infer(args):
     from vggt_omega.utils.load_fn import load_and_preprocess_images
     from vggt_omega.utils.pose_enc import encoding_to_camera
 
+    # Hash before allocating the model. The old late hash could exhaust host
+    # commit even after successful inference and leave exports without a manifest.
+    sha, size_bytes = file_sha256(ckpt)
+    input_hashes = {p.name: file_sha256(p)[0] for p in paths}
+    code_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT,
+                                          text=True, stderr=subprocess.DEVNULL).strip()
+    source_sha = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
     t0 = time.time()
     backbone_low_memory = agg_dtype != torch.float32
     use_autocast = (device == "cuda") and not backbone_low_memory
@@ -473,6 +485,13 @@ def cmd_infer(args):
         conf = conf[..., 0]
     extr = to_np(extrinsic)
     intr = to_np(intrinsic)
+    frame_tokens = None
+    if args.save_tokens:
+        frame_tokens = to_np(predictions["camera_and_register_tokens"]).mean(axis=1).astype(np.float32)
+    peak = (torch.cuda.max_memory_allocated() / 2**20) if device == "cuda" else 0.0
+    del model, images, predictions, extrinsic, intrinsic
+    if device == "cuda":
+        torch.cuda.empty_cache()
 
     out.mkdir(parents=True, exist_ok=True)
     for sub in ("depth", "confidence"):
@@ -497,11 +516,12 @@ def cmd_infer(args):
             "T_world_to_cam": np.vstack([extr[index], [0.0, 0.0, 0.0, 1.0]]).astype(np.float64).tolist(),
             "pixel_affine_original_to_model": affine.tolist()})
     if args.save_tokens:
-        tokens = to_np(predictions["camera_and_register_tokens"])  # (S, T, C)
-        np.save(out / "frame_tokens.npy", tokens.mean(axis=1).astype(np.float32))
-    sha, size_bytes = file_sha256(ckpt)
-    peak = (torch.cuda.max_memory_allocated() / 2**20) if device == "cuda" else 0.0
+        np.save(out / "frame_tokens.npy", frame_tokens)
     manifest = {"backend": "vggt-omega", "exporter": "scripts/view_selection.py infer",
+                "commit": code_commit, "source_script_sha256": source_sha,
+                "torch": torch.__version__, "cuda": torch.version.cuda,
+                "gpu": torch.cuda.get_device_name() if device == "cuda" else None,
+                "input_sha256": input_hashes,
                 "checkpoint": {"path": str(ckpt), "sha256": sha, "bytes": size_bytes},
                 "device": device, "aggregator_dtype": str(agg_dtype), "heads_dtype": "float32",
                 "image_resolution_requested": args.image_resolution,
@@ -516,9 +536,6 @@ def cmd_infer(args):
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     print(f"[ok] {len(paths)} frames | infer {infer_seconds:.1f}s | peak {peak:.0f} MiB -> {out}",
           flush=True)
-    del model, images, predictions
-    if device == "cuda":
-        torch.cuda.empty_cache()
 
 
 # ----------------------------------------------------------------------------- eval
@@ -527,6 +544,7 @@ def eval_geometry(omega_dir, gt_dir, only_stems=None):
     """capture_eval.py's image-space math without fusion: train-only Sim(3) on the
     evaluated frames' camera centres, nearest regrid onto the GT K grid, foreground
     mask, abs-rel / normal (flat/edge) / RPE. Returns per-view rows + aggregates."""
+    load_numerics()
     omega_dir, gt_dir = Path(omega_dir), Path(gt_dir)
     records = json.loads((gt_dir / "cameras.json").read_text())["frames"]
     if only_stems is not None:
@@ -744,6 +762,11 @@ def cmd_loo(args):
         validate_loo_protocol(work / cached.stem / "omega", reference)
 
     if args.phase == "run":
+        def evaluate_worker(export, selected, output):
+            subprocess.run([sys.executable, str(Path(__file__).resolve()), "eval",
+                            "--omega", str(export), "--gt", str(gt), "--frames", ",".join(selected),
+                            "--out", str(output)], check=True)
+            return json.loads(output.read_text())
         # Reuse existing matched-precision exports, but recompute on the fixed probe
         # cameras. Preserve the earlier retained-view evaluations for audit.
         if probes:
@@ -755,8 +778,7 @@ def cmd_loo(args):
                         archive = work / "retained_view_evaluations"
                         archive.mkdir(exist_ok=True)
                         shutil.copyfile(cached, archive / cached.name)
-                        result = eval_geometry(work / f"minus_{s}" / "omega", gt, probes)
-                        cached.write_text(json.dumps(result, indent=2) + "\n")
+                        evaluate_worker(work / f"minus_{s}" / "omega", probes, cached)
         todo = [s for s in candidates if not (work / f"minus_{s}.json").is_file()]
         print(f"[loo] {len(stems)} views, {len(todo)} deletions to run")
         for s in todo:
@@ -770,10 +792,16 @@ def cmd_loo(args):
             validate_loo_protocol(out, reference)
             eval_out = work / f"minus_{s}.json"
             retained = [x for x in stems if x != s]
-            result = eval_geometry(out, gt, probes or retained)
-            eval_out.write_text(json.dumps(result, indent=2) + "\n")
+            result = evaluate_worker(out, probes or retained, eval_out)
             print(f"[loo] {s}: abs_rel {result['aggregate']['abs_rel']['mean']:.5f} "
                   f"normal {result['aggregate']['normal_deg']['mean']:.3f}", flush=True)
+        tabulate = [sys.executable, str(Path(__file__).resolve()), "loo", "--phase", "tabulate",
+                    "--base", str(base), "--gt", str(gt), "--work", str(work)]
+        for flag, value in (("--probe-stems", args.probe_stems),
+                            ("--anchor-stems", args.anchor_stems), ("--scores", args.scores)):
+            if value:
+                tabulate += [flag, value]
+        subprocess.run(tabulate, check=True)
         return
 
     if args.phase == "joint":
@@ -1139,6 +1167,8 @@ def main():
     p.set_defaults(fn=cmd_viz)
 
     args = parser.parse_args()
+    if args.fn != cmd_loo or args.phase != "run":
+        load_numerics()
     args.fn(args)
 
 

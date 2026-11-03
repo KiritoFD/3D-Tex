@@ -1,0 +1,21 @@
+{
+  "scope": "Single-scene local pilot; fixed 16 inputs and 8 probes; background proxies and predicted-baseline groups, not physical turntable capture",
+  "root": "data/scenes/capture_next",
+  "out": "outputs/capture_next",
+  "probes": ["r_0", "r_13", "r_26", "r_40", "r_53", "r_66", "r_79", "r_92"],
+  "anchor": "data/scenes/nerf_lego16",
+  "pool": "data/scenes/viewsel/runs/ab",
+  "anchor_gt": "data/scenes/nerf_lego_gt16/geometry/gt",
+  "pool_gt": "data/scenes/viewsel/cases/e2/geometry/gt",
+  "groups": ["white16", "gray16", "static_texture16", "near_baseline16", "diverse_baseline16", "white16_768"],
+  "model_resolution": 512,
+  "resolution_overrides": {"white16_768": 768},
+  "model_seed": 42,
+  "aggregator_dtype": "bfloat16",
+  "reuse_resolution": {
+    "res256": "data/scenes/capture_res256",
+    "res400": "data/scenes/capture_res400",
+    "res512": "data/scenes/capture_res512"
+  },
+  "blender": "E:/blender-5.2.4-candidate+v52.4f5026e99892-windows.amd64-release/blender-5.2.4-candidate+v52.4f5026e99892-windows.amd64-release/blender.exe"
+}

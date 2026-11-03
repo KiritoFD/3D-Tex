@@ -16,6 +16,21 @@ from diagnostics.pose_depth_ablation import depth_normals
 
 
 class GeometryFixes(unittest.TestCase):
+    def test_lattice_preserves_translation_and_channel_order(self):
+        import torch
+        from mesh_opt.geometry import make_lattice, lattice_offsets
+        vertices = torch.tensor([[0.,0,0], [2.,3,4], [.7,1.3,2.1]])
+        field, grid = make_lattice(vertices, 1., 1.)
+        with torch.no_grad():
+            field[:,0] = 2
+            field[:,1] = -3
+            field[:,2] = 5
+        actual = lattice_offsets(field, grid)
+        torch.testing.assert_close(actual, torch.tensor([[2.,-3,5.]]).expand_as(vertices))
+        actual[:,0].sum().backward()
+        self.assertAlmostEqual(float(field.grad[:,0].sum()), 3., places=5)
+        self.assertEqual(float(field.grad[:,1:].abs().sum()), 0.)
+
     def test_burr_projection_uses_vertical_principal_point(self):
         from capture.capture_eval import burr_rate
         frame = {"depth": np.ones((4,4)), "foreground": np.ones((4,4), dtype=bool),
