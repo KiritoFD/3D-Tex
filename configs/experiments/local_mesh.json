@@ -1,0 +1,19 @@
+{
+  "scope": "Local feasibility and geometry ablation; diagnostic source-gauge cameras/masks; not a deployment benchmark",
+  "common": {
+    "mesh": "outputs/geometry_pruning/eval_carve_v35c30_conf/carve_v35c30/mesh.ply",
+    "camera-mode": "diagnostic",
+    "voxel-size": 0.01150144350298549,
+    "iters": 300,
+    "resolution": 256,
+    "seed": 20261103
+  },
+  "runs": {
+    "A256": {"out": "outputs/m2/local_A256"},
+    "B1_256": {"out": "outputs/m2/local_B1_256", "lambda-prior": 0.1, "tolerance-voxels": 1},
+    "B2_256": {"out": "outputs/m2/local_B2_256", "lambda-prior": 0.1, "tolerance-voxels": 2},
+    "B4_256": {"out": "outputs/m2/local_B4_256", "lambda-prior": 0.1, "tolerance-voxels": 4},
+    "C2_256": {"out": "outputs/m2/local_C2_256", "lambda-prior": 0.1, "tolerance-voxels": 2, "lambda-colmap": 0.1},
+    "A512": {"out": "outputs/m2/local_A512", "resolution": 512}
+  }
+}

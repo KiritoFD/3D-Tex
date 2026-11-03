@@ -1,5 +1,14 @@
 # View Selection: per-view marginal contribution to VGGT-Ω geometry
 
+**2026-11-03 update:** Fusion LOO completed 32/32. Joint omission of its top four
+reaches F 0.61336 versus 20 equal-count random controls (mean 0.58432, max 0.60641).
+Input LOO now supports eight fixed probes and excludes those from deletion.
+The old bf16 process terminated with a CUDA error after five exports; the fixed-probe
+continuation reuses matching exports. Current evidence and caveats:
+[local_next/README.md](local_next/README.md). The status/time snapshots below
+describe the earlier investigation. Old burr numbers are invalid after the cy/fy fix;
+F/P/R remain valid.
+
 Status: core groups (E0/E1/E2) and extreme groups B1–B4/B6 measured end-to-end;
 B5 (unrelated views) evaluated; the initial LOO sweep was stopped due to a
 precision mismatch (see audit below), with matched-bf16 reruns required. **Headline: adding

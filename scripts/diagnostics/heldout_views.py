@@ -17,14 +17,14 @@ def prepare(args):
     rotation, translation = np.asarray(alignment["rotation"]), np.asarray(alignment["translation"])
     frames = []
     with zipfile.ZipFile(args.archive) as archive:
-        meta = json.loads(archive.read("nerf_synthetic/lego/transforms_test.json"))
+        meta = json.loads(archive.read(f"nerf_synthetic/lego/transforms_{args.split}.json"))
         focal = 400 / np.tan(meta["camera_angle_x"] / 2)
         k = np.array([[focal,0,400],[0,focal,400],[0,0,1]])
-        for index in (0,50,100,150):
+        for index in args.indices:
             frame = meta["frames"][index]
             stem = Path(frame["file_path"]).stem
-            name = f"test_{stem}.png"
-            Image.open(io.BytesIO(archive.read(f"nerf_synthetic/lego/test/{stem}.png"))).save(out / "images" / name)
+            name = f"{args.split}_{stem}.png"
+            Image.open(io.BytesIO(archive.read(f"nerf_synthetic/lego/{args.split}/{stem}.png"))).save(out / "images" / name)
             gt = np.linalg.inv(np.asarray(frame["transform_matrix"]) @ np.diag([1,-1,-1,1]))
             if args.gauge == "omega":
                 pose = np.eye(4)
@@ -35,8 +35,8 @@ def prepare(args):
             frames.append({"frame": name, "file": name, "K_original": k.tolist(), "K_model": k.tolist(),
                            "original_width": 800, "original_height": 800, "model_width": 800, "model_height": 800,
                            "T_world_to_cam": pose.tolist(), "pixel_affine_original_to_model": np.eye(3).tolist()})
-    (out / "cameras.json").write_text(json.dumps({"protocol": f"test indices 0,50,100,150; {args.gauge} gauge; evaluation only", "frames": frames}, indent=2))
-    print(f"Prepared four heldout views in {out}")
+    (out / "cameras.json").write_text(json.dumps({"protocol": f"{args.split} indices {args.indices}; {args.gauge} gauge; evaluation only", "frames": frames}, indent=2))
+    print(f"Prepared {len(args.indices)} heldout views in {out}")
 
 
 def compare(args):
@@ -70,6 +70,8 @@ def main():
     parser.add_argument("--out", default="outputs/lego_heldout")
     parser.add_argument("--alignment", default="deliverables/lego_p0/ablation_report.json")
     parser.add_argument("--archive", default="data/.cache/nerf-syn/nerf_syn.zip")
+    parser.add_argument("--indices", type=int, nargs="+", default=[0,50,100,150])
+    parser.add_argument("--split", choices=["test", "val"], default="test")
     parser.add_argument("--before", default="outputs/lego_heldout/previous")
     parser.add_argument("--after", default="deliverables/lego_pgsr/heldout")
     parser.add_argument("--after-label", default="pgsr_mesh")

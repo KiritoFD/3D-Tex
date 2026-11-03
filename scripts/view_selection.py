@@ -734,13 +734,30 @@ def cmd_loo(args):
     work.mkdir(parents=True, exist_ok=True)
     frames = json.loads((base / "geometry" / "omega" / "cameras.json").read_text())["frames"]
     stems = [Path(f["frame"]).stem for f in frames]
+    probes = args.probe_stems.split(",") if args.probe_stems else []
+    if probes and (len(set(probes)) != len(probes) or not set(probes) < set(stems)):
+        raise ValueError("probe-stems must be distinct and a strict subset of the full input")
+    candidates = [s for s in stems if s not in set(probes)]
     reference = json.loads((base / "geometry" / "omega" / "manifest.json").read_text())
     inference_flags = loo_inference_flags(reference)
     for cached in work.glob("minus_*.json"):
         validate_loo_protocol(work / cached.stem / "omega", reference)
 
     if args.phase == "run":
-        todo = [s for s in stems if not (work / f"minus_{s}.json").is_file()]
+        # Reuse existing matched-precision exports, but recompute on the fixed probe
+        # cameras. Preserve the earlier retained-view evaluations for audit.
+        if probes:
+            for s in candidates:
+                cached = work / f"minus_{s}.json"
+                if cached.is_file():
+                    old = json.loads(cached.read_text())
+                    if {r["stem"] for r in old["per_view"]} != set(probes):
+                        archive = work / "retained_view_evaluations"
+                        archive.mkdir(exist_ok=True)
+                        shutil.copyfile(cached, archive / cached.name)
+                        result = eval_geometry(work / f"minus_{s}" / "omega", gt, probes)
+                        cached.write_text(json.dumps(result, indent=2) + "\n")
+        todo = [s for s in candidates if not (work / f"minus_{s}.json").is_file()]
         print(f"[loo] {len(stems)} views, {len(todo)} deletions to run")
         for s in todo:
             out = work / f"minus_{s}" / "omega"
@@ -753,7 +770,7 @@ def cmd_loo(args):
             validate_loo_protocol(out, reference)
             eval_out = work / f"minus_{s}.json"
             retained = [x for x in stems if x != s]
-            result = eval_geometry(out, gt, retained)
+            result = eval_geometry(out, gt, probes or retained)
             eval_out.write_text(json.dumps(result, indent=2) + "\n")
             print(f"[loo] {s}: abs_rel {result['aggregate']['abs_rel']['mean']:.5f} "
                   f"normal {result['aggregate']['normal_deg']['mean']:.3f}", flush=True)
@@ -766,9 +783,11 @@ def cmd_loo(args):
         rng = np.random.default_rng(args.seed)
         sets = {"drop_flagged": harmful}
         for k in range(args.draws):
-            sets[f"drop_random_{k}"] = sorted(rng.choice(stems, size=len(harmful),
+            sets[f"drop_random_{k}"] = sorted(rng.choice(candidates, size=len(harmful),
                                                          replace=False).tolist())
-        full = eval_geometry(base / "geometry" / "omega", gt, stems)
+        if set(harmful) - set(candidates):
+            raise ValueError("joint deletion cannot remove probe views")
+        full = eval_geometry(base / "geometry" / "omega", gt, probes or stems)
         full_view = {r["stem"]: r for r in full["per_view"]}
         rows = []
         for name, drop in sets.items():
@@ -784,12 +803,12 @@ def cmd_loo(args):
                 subprocess.run(cmd, check=True)
                 validate_loo_protocol(out, reference)
                 retained = [x for x in stems if x not in set(drop)]
-                result = eval_geometry(out, gt, retained)
+                result = eval_geometry(out, gt, probes or retained)
                 (work / f"joint_{name}.json").write_text(json.dumps(result, indent=2) + "\n")
             validate_loo_protocol(out, reference)
             result = json.loads((work / f"joint_{name}.json").read_text())
             retained = [x for x in stems if x not in set(drop)]
-            ref = [x for x in retained if x in set(anchor)] or retained
+            ref = probes or [x for x in retained if x in set(anchor)] or retained
             minus_view = {r["stem"]: r for r in result["per_view"]}
             rows.append({"set": name, "dropped": drop, "reference": "retained_core",
                          "n_ref": len(ref),
@@ -810,17 +829,19 @@ def cmd_loo(args):
         return
 
     # tabulate
-    full = eval_geometry(base / "geometry" / "omega", gt, stems)
+    full = eval_geometry(base / "geometry" / "omega", gt, probes or stems)
     (work / "full.json").write_text(json.dumps(full, indent=2) + "\n")
     full_view = {r["stem"]: r for r in full["per_view"]}
     anchor = set(args.anchor_stems.split(",")) if args.anchor_stems else set()
     rows = []
-    for s in stems:
+    for s in candidates:
         path = work / f"minus_{s}.json"
         if not path.is_file():
             continue
         minus = json.loads(path.read_text())
-        retained = [x for x in stems if x != s]
+        retained = probes or [x for x in stems if x != s]
+        if probes and {r["stem"] for r in minus["per_view"]} != set(probes):
+            minus = eval_geometry(work / f"minus_{s}" / "omega", gt, probes)
         full_ref = [full_view[x] for x in retained]
         minus_view = {r["stem"]: r for r in minus["per_view"]}
         delta_rel = (np.mean([r["abs_rel"] for r in full_ref])
@@ -839,11 +860,13 @@ def cmd_loo(args):
     deltas = np.array([r["delta_abs_rel"] for r in rows])
     rng = np.random.default_rng(args.seed)
     boot = [float(np.mean(rng.choice(deltas, size=len(deltas), replace=True))) for _ in range(2000)]
-    report = {"protocol": "Delta_i = E(S) - E(S\\{i}) on the retained 31 views; "
+    report = {"protocol": "Delta_i = E(S) - E(S\\{i}) on " +
+                          ("fixed probe views; " if probes else "retained views; ") +
                           "Delta > 0 means the dropped view was a net NEGATIVE contributor; "
                           "only a complete sweep is the exhaustive k=1 random-deletion control",
               "n_views": len(stems), "n_deletions": len(rows),
-              "complete": len(rows) == len(stems),
+              "complete": len(rows) == len(candidates),
+              "n_candidates": len(candidates), "probe_stems": probes,
               "inference_protocol": reference,
               "delta_abs_rel": {"mean": float(deltas.mean()), "std": float(deltas.std()),
                                 "min": float(deltas.min()), "max": float(deltas.max()),
@@ -882,11 +905,20 @@ def cmd_fusion(args):
     if args.mode == "loo":
         groups.update({f"minus_{s}": [s] for s in stems})
     else:
-        scores = json.loads(Path(args.scores).read_text())
         if not 0 < args.drop_count < len(stems):
             raise ValueError("drop-count must leave at least one view")
-        groups[f"worst{args.drop_count}"] = sorted(stems, key=lambda s: (scores[s]["reproj_inlier_mean"], s))[
-            :args.drop_count]
+        if args.mode == "joint":
+            ranked = json.loads(Path(args.oracle_report).read_text())["rows"]
+            ranked = sorted((r for r in ranked if len(r["excluded"]) == 1),
+                            key=lambda r: -r["delta_fscore"])
+            selected = [r["excluded"][0] for r in ranked[:args.drop_count]]
+            if len(selected) != args.drop_count or not set(selected) <= set(stems):
+                raise ValueError("oracle report does not cover the requested deletion set")
+            groups[f"oracle{args.drop_count}"] = selected
+        else:
+            scores = json.loads(Path(args.scores).read_text())
+            groups[f"worst{args.drop_count}"] = sorted(stems, key=lambda s: (scores[s]["reproj_inlier_mean"], s))[
+                :args.drop_count]
         rng = np.random.default_rng(args.seed)
         groups.update({f"random{i}": sorted(rng.choice(stems, args.drop_count,
                                                        replace=False).tolist())
@@ -1075,6 +1107,8 @@ def main():
     p.add_argument("--draws", type=int, default=6, help="random equal-count control draws")
     p.add_argument("--checkpoint", default=str(CHECKPOINT))
     p.add_argument("--anchor-stems", default=None, help="comma-separated core-view stems")
+    p.add_argument("--probe-stems", default=None,
+                   help="fixed reference views: always retained, never deletion candidates")
     p.add_argument("--scores", default=None, help="score JSON for the Spearman analysis")
     p.add_argument("--seed", type=int, default=20261103)
     p.add_argument("--min-free-gib", type=float, default=5.0)
@@ -1085,7 +1119,8 @@ def main():
     p.add_argument("--capture", required=True)
     p.add_argument("--out", required=True)
     p.add_argument("--blender", required=True, help="Blender executable for source-triangle metrics")
-    p.add_argument("--mode", choices=["controls", "loo"], default="controls")
+    p.add_argument("--mode", choices=["controls", "loo", "joint"], default="controls")
+    p.add_argument("--oracle-report", default=str(ROOT / "outputs/viewsel/fusion_loo/fusion_report.json"))
     p.add_argument("--scores", default=str(ROOT / "outputs/viewsel/scores_ab.json"))
     p.add_argument("--drop-count", type=int, default=4)
     p.add_argument("--draws", type=int, default=3)

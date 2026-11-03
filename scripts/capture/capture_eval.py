@@ -44,7 +44,7 @@ def burr_rate(points, gt_frames, voxel, dilation=2):
         z = cam[:, 2]
         front = z > 1e-6
         u = np.rint(cam[:, 0] / np.maximum(z, 1e-6) * k[0, 0] + k[0, 2]).astype(int)
-        v = np.rint(cam[:, 1] / np.maximum(z, 1e-6) * k[1, 1] + k[1, 1]).astype(int)
+        v = np.rint(cam[:, 1] / np.maximum(z, 1e-6) * k[1, 1] + k[1, 2]).astype(int)
         inside = front & (u >= 0) & (u < depth.shape[1]) & (v >= 0) & (v < depth.shape[0])
         u_i, v_i, z_i = u[inside], v[inside], z[inside]
         in_fg = fg[v_i, u_i]

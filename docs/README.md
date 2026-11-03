@@ -6,6 +6,10 @@ Latest experiment: [VIEW_SELECTION.md](experiments/VIEW_SELECTION.md) separates
 input interference from fusion degradation, reports foreign-view failure, and
 records the LOO precision mismatch plus corrected rerun protocol.
 
+Local next stage: [results, limitations and remaining work](experiments/local_next/README.md),
+including completed fusion LOO, 20 joint-deletion controls, actual diagnostic/native
+M2 runs, independent val16 silhouettes, and the literature-based capture revision.
+
 0. **[P0_GEOMETRY_OPTIMIZATION.md](experiments/P0_GEOMETRY_OPTIMIZATION.md)** — pose/depth isolation, PGSR 10k negative result, voxel-scale filtering and untouched test-view measurements.
 0. **[GT_TSDF_DIAGNOSTIC.md](GT_TSDF_DIAGNOSTIC.md)** — direct ExMesh initialization research and source-GT depth TSDF comparison, with provenance, measurements and commands.
 0. **[PIPELINE_FIXES.md](PIPELINE_FIXES.md)** — corrected foreground, TSDF, cameras and texture pipeline; lego reproduction and honest quality limits.

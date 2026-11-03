@@ -16,6 +16,32 @@ from diagnostics.pose_depth_ablation import depth_normals
 
 
 class GeometryFixes(unittest.TestCase):
+    def test_burr_projection_uses_vertical_principal_point(self):
+        from capture.capture_eval import burr_rate
+        frame = {"depth": np.ones((4,4)), "foreground": np.ones((4,4), dtype=bool),
+                 "K": np.array([[10.,0,2],[0,20.,1],[0,0,1]]), "T": np.eye(4)}
+        self.assertEqual(burr_rate(np.array([[0.,0,.5]]), [frame], .1), 1.)
+
+    def test_mesh_crease_weights_use_vertex_normals_and_unique_edges(self):
+        import torch
+        from mesh_opt.geometry import regularizer_graph, displacement_loss
+        vertices = torch.tensor([[0.,0,0], [1.,0,0], [1.,1,0], [0.,1,0]])
+        faces = torch.tensor([[0,1,2], [0,2,3]])
+        edges, degree, weights = regularizer_graph(vertices, faces)
+        self.assertEqual(len(edges), 10)
+        torch.testing.assert_close(weights, torch.ones(4))
+        self.assertAlmostEqual(float(displacement_loss(torch.ones_like(vertices),
+                              edges, degree, weights, 1.)), 0.)
+
+    def test_tolerance_depth_has_no_gradient_inside_dead_zone(self):
+        import torch
+        from mesh_opt.geometry import tolerance_loss
+        rendered = torch.tensor([1.5, 2.5], requires_grad=True)
+        loss = tolerance_loss(rendered, torch.ones(2), torch.ones(2),
+                              torch.ones(2, dtype=torch.bool), 1., 1.)
+        loss.backward()
+        torch.testing.assert_close(rendered.grad, torch.tensor([0., .25]))
+
     def test_loo_inherits_precision_and_rejects_mixed_cached_exports(self):
         from view_selection import loo_inference_flags, validate_loo_protocol
         reference = dict(aggregator_dtype="torch.bfloat16", heads_dtype="float32",

@@ -1,5 +1,14 @@
 # GEOMETRY_OPTIMIZATION — geometry roadmap after P0 / P0.5 / capture group 1
 
+**2026-11-03 local execution:** corrected M2 and voxel-tolerance priors now run in
+WSL; diagnostic F reaches 0.73685 and a separately initialised native prediction
+control reaches 0.72687. Both worsen mesh normal error and still close most holes,
+so neither replaces the adopted reference. See [complete results and provenance](local_next/README.md).
+The official ICLR Mesh Splatting CUDA component compiled and passed a small
+forward/backward probe; full DTU/DMTet/remeshing reproduction is still pending.
+Historical burr values use the pre-fix vertical projection and are invalid;
+this does not invalidate the distance/recall metrics.
+
 Purpose: which geometry route fits which failure mode, expected gain, cost, and
 the trigger signals for switching. Cross-references: capture-side avoidable
 issues are in `docs/experiments/CAPTURE_GUIDELINES.md`; raw data in

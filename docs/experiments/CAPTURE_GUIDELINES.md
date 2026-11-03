@@ -1,4 +1,15 @@
-# CAPTURE_GUIDELINES — how to photograph objects so VGGT-Omega does not degrade
+# CAPTURE_GUIDELINES — exploratory capture evidence for VGGT-Omega
+
+**2026-11-03 revision:** numerical recommendations below are LEGO-specific,
+not general VGGT/Omega capture requirements. See the
+[primary-source audit](local_next/RESEARCH_AUDIT.md): prioritise effective parallax,
+structure pixel scale and background/motion consistency at fixed view count.
+High overlap is not required between every Omega input pair. Training-label
+bias is another plausible thin-structure failure mechanism, not proven for this LEGO.
+The earlier turntable recommendation was an extrapolation: no actual turntable
+with a static background was tested. Historical `burr_rate` values used an
+incorrect vertical projection; corrected comparisons are in the
+[local results](local_next/README.md).
 
 Scope: evidence-backed capture rules derived from controlled experiments on the
 NeRF-Synthetic Lego scene (GT geometry, VGGT-Omega 1B 512, frozen P0 evaluation
@@ -15,7 +26,7 @@ experiment data: `docs/experiments/CAPTURE_EXPERIMENTS.md`; geometry context:
 | Favour elevation/parallax diversity over azimuth density. The non-uniform 16-view dataset trajectory (elevations 9.7°–85.7°) beats all uniform ring subsets including 64 views (F 0.6206 vs 0.4940). Include high-elevation (top-down-ish) views of flat surfaces. | **[实测支持]** group 1; high-elevation benefit inferred from trajectory composition |
 | Adjacent azimuth spacing ~12° (32 views/ring) is the saturation point for a single ring on **F-score**; denser (≤6°) improves depth abs-rel (1.46%→1.32%) and large-feature quality, **but hurts precision (0.46→0.39) and silhouette quality** (burr cloud grows from a fat skirt at 8 views to body-wide spikes at 64). Use 32 as the single-ring ceiling; do not densify further to chase detail. | **[实测支持]** group 1 + visual review |
 | Thin rods, studs, holes and sharp rims are NOT recovered by adding views: sharp-region precision falls 0.28→0.19 from 8→64 views. If the object has thin structures, do not expect capture density alone to fix them — see GEOMETRY_OPTIMIZATION.md. | **[实测支持]** group 1 |
-| Recommended starting point for small objects on a turntable: one ring at ~30–40° elevation with ~12° spacing plus a second ring at high elevation (~70–85°) with ~22–45° spacing; **24–40 views total**. Measured: 16+8 dual-ring F=0.5678 beats 32-view single ring F=0.5352 and is close to the (untuned) 16-view anchor F=0.6206. | **[实测支持]** group 2 |
+| Exploratory small-object starting point: one ring at ~30–40° elevation plus high-elevation views (~70–85°), **24–40 views total**. Measured: 16+8 dual-ring F=0.5678 beats 32-view single ring F=0.5352, but still trails anchor16 F=0.6206. Neither this count range nor physical turntable capture has been validated across objects. | **[经验推断]** from group 2 |
 | Keep the whole object in frame at all times for the BASE trajectory; very close detail shots are fine **only as additions to a full-frame set, never as a replacement** — crop-only sets break multi-view registration (trajectory residual ×8, abs_rel 1.5→2.5%), while a mixed 16 full + 32 close-up run stays anchored (0.048) and recovers stud arrays / wheel rims / spokes that full-frame melts (edge normals −6°, region abs_rel up to −3%). If the object has fine structure that matters, add close-ups of those regions to the standard ring. | **[实测支持]** tiling probe (P1 Follow-up D) |
 
 ## Failure modes the metrics cannot see
