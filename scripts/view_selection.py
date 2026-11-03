@@ -295,8 +295,18 @@ def cmd_build(args):
         dst = run / "images" / f"{entry['stem']}.png"
         from PIL import Image
         with Image.open(src) as im:
-            im.convert("RGB").save(dst)
+            rgb = im.convert("RGB")
+            # Centre-crop to square + resize to the model resolution: every input of the
+            # mixed A+B5 batch then shares one shape. Without this the loader pads mixed
+            # shapes to a common size and the per-frame pixel-affine contract breaks
+            # (measure_pixel_affine raises "non-uniform resize").
+            side = min(rgb.size)
+            left = (rgb.width - side) // 2
+            top = (rgb.height - side) // 2
+            rgb.crop((left, top, left + side, top + side)).resize(
+                (args.b5_resolution, args.b5_resolution), Image.LANCZOS).save(dst)
         runs["b5"].append({"stem": entry["stem"], "role": "candidate", "scene": entry["scene"],
+                           "transform": f"centre_crop_square + resize {args.b5_resolution}",
                            "sha256": image_sha256(dst)})
     for entry in selection["B6"]:
         add_train(out_root / "runs" / "b6", entry["stem"], "candidate")
@@ -891,6 +901,16 @@ def cmd_viz(args):
         rows_png.append(np.concatenate(tiles, axis=1))
     panel = np.concatenate(rows_png, axis=0)
     Image.fromarray(panel).save(out / args.name)
+    if args.crop:
+        x, y, w, h = (int(v) for v in args.crop.split(","))
+        tiles_per_row = len(tiles)
+        crop_rows = []
+        for row in rows_png:
+            crop_rows.append(np.concatenate([row[y:y + h, i * 512 + x:i * 512 + x + w]
+                                             for i in range(tiles_per_row)], axis=1))
+        Image.fromarray(np.concatenate(crop_rows, axis=0)).save(
+            out / f"{Path(args.name).stem}_crop_{x}_{y}_{w}_{h}.png")
+        print(f"[viz] crop saved ({x},{y},{w},{h})")
     print(f"[viz] {out / args.name} {panel.shape}")
 
 
@@ -915,6 +935,7 @@ def main():
     p.add_argument("--dataset-zip", default=str(DATASET_ZIP))
     p.add_argument("--eth3d-root", default=str(ETH3D_ROOT))
     p.add_argument("--out-root", default=str(VIEWSEL))
+    p.add_argument("--b5-resolution", type=int, default=512)
     p.set_defaults(fn=cmd_build)
 
     p = sub.add_parser("assemble")
@@ -975,6 +996,7 @@ def main():
     p.add_argument("--stems", required=True)
     p.add_argument("--out", required=True)
     p.add_argument("--name", default="panel.png")
+    p.add_argument("--crop", default=None, help="x,y,w,h crop on the 512 grid, saved alongside")
     p.set_defaults(fn=cmd_viz)
 
     args = parser.parse_args()
