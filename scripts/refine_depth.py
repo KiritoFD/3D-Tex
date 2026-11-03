@@ -65,7 +65,10 @@ def load_frames(omega: Path, images_dir: Path, device):
                                 flags=cv2.INTER_AREA, borderValue=0.0)
         depths.append(torch.from_numpy(depth).to(device))
         rgbs.append(torch.from_numpy(warped[..., :3]).permute(2, 0, 1).to(device))
-        masks.append(torch.from_numpy(warped[..., 3] > 0.5).to(device))
+        # Alpha matte when present; real photographs (no alpha) fall back to
+        # "valid predicted depth" as the object mask.
+        alpha = warped[..., 3] if rgba.shape[-1] == 4 and np.ptp(warped[..., 3]) > 0.5 else None
+        masks.append(torch.from_numpy(alpha > 0.5 if alpha is not None else depth > 0).to(device))
         ks.append(torch.from_numpy(k).float().to(device))
         ts.append(torch.from_numpy(np.asarray(frame["T_world_to_cam"])).float().to(device))
         names.append(stem)
@@ -115,6 +118,11 @@ def main():
     parser.add_argument("--depth-beta", type=float, default=0.01, help="huber beta, relative depth")
     parser.add_argument("--prior-beta", type=float, default=0.02, help="huber beta, residual")
     parser.add_argument("--seed", type=int, default=20261103)
+    parser.add_argument("--holdout", type=int, default=0,
+                        help="hold out N random views from being used as photo SOURCE views; "
+                             "the held-out-transfer ZNCC gap then tests whether the photometric "
+                             "signal is geometrically real (generalises) or adversarial (does not)")
+    parser.add_argument("--holdout-seed", type=int, default=7)
     parser.add_argument("--log-every", type=int, default=50)
     args = parser.parse_args()
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
@@ -135,6 +143,11 @@ def main():
     centres = torch.stack([-(t[:3, :3].mT @ t[:3, 3]) for t in ts])
     dist = torch.cdist(centres, centres)
     dist.fill_diagonal_(float("inf"))
+    holdout_idx = []
+    if args.holdout > 0:
+        gen = torch.Generator().manual_seed(args.holdout_seed)
+        holdout_idx = torch.randperm(n_views, generator=gen)[: args.holdout].tolist()
+        dist[:, holdout_idx] = float("inf")
     source_idx = dist.argsort(dim=1)[:, : args.sources]  # (V, S)
 
     # Residual parameters: one set of grids per view.
@@ -318,6 +331,7 @@ def main():
     (out_geo / "cameras.json").write_text(json.dumps(cameras, indent=2) + "\n")
     log["seconds"] = round(time.time() - started, 1)
     log["delta_stats"] = log["iters"][-1]
+    log["holdout_views"] = [names[i] for i in holdout_idx]
     (out / "refine_log.json").write_text(json.dumps(log, indent=2) + "\n")
     print(f"[ok] refined geometry -> {out_geo} ({log['seconds']}s)", flush=True)
 
