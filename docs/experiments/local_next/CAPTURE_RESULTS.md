@@ -110,8 +110,16 @@ torch_scatter/igl。不能将 CUDA 组件成功改写成训练入口已跑通。
 后续在专用训练环境补依赖、准备标准 DTU 与单目法线，然后执行原版基线；
 本轮未以 GT 法线替代单目法线，也未宣称完整复现成功。
 
-后续已启动 `/root/venvs/mesh-splatting` 的 CPU/图像依赖安装（进行中）：
+后续已完成 `/root/venvs/mesh-splatting` 的 CPU/图像依赖安装：
 使用 `.pth` 复用现有 render 环境中锁定的 Torch 2.14.1+cu126 / nvdiffrast / PyTorch3D，
 新依赖安装到新 venv。它是共享固定二进制运行时的专用训练环境，不声称完全独立的
-旧版官方环境。Torch constraint 和安装日志在 `outputs/mesh_splatting/`；
-CUDA 额外依赖、DTU/法线准备及完整训练仍未完成。
+旧版官方环境。Open3D 0.20.0、pymeshlab、libigl 2.6.3 已实际 import。
+PyPI torchvision 0.29.2 出现 `torchvision::nms` 缺失，改装官方 CPU 构建
+0.29.2+cpu 后，image utility 已执行并保存 PNG；没有替换其训练算法。
+原 render 环境仍保持 Torch 2.14.1+cu126，且未被安装 pymeshlab，隔离检查通过。
+
+Torch constraint、freeze、import 状态和安装日志在 `outputs/mesh_splatting/`。
+完整归档的第一次 JIT 编译暴露同样的缺失 `<cstdint>`；用组件脚本应用同一补丁后，
+已在新环境重建并再次通过前后向/alpha 有限差分（`full_spike/spike.json`）。
+真实训练入口已前进到缺少 `torch_scatter`；tinycudann、torch_scatter、DTU/法线准备
+及完整训练仍未完成。
