@@ -113,6 +113,10 @@ def main():
     parser.add_argument("--source-views", type=int, default=10,
                         help="source images per reference for patch-match.cfg (nearest camera centres); "
                              "uses __all__ when >= views-1")
+    parser.add_argument("--depth-min", type=float, default=0.0,
+                        help="PatchMatchStereo depth_min; required when sparse model has no points")
+    parser.add_argument("--depth-max", type=float, default=0.0,
+                        help="PatchMatchStereo depth_max; required when sparse model has no points")
     parser.add_argument("--skip-run", action="store_true", help="only convert existing .bin maps")
     args = parser.parse_args()
     images = Path(args.images).resolve()
@@ -122,12 +126,21 @@ def main():
     out = Path(args.out).resolve()
     (out / "depth").mkdir(parents=True, exist_ok=True)
     (out / "normals").mkdir(parents=True, exist_ok=True)
-    colmap = Path(args.colmap_exe).resolve()
-    if not colmap.is_file():
+    colmap = Path(args.colmap_exe)
+    # Windows .exe paths won't be is_file() under WSL; check via "wsl test" only
+    # when running inside WSL, otherwise rely on the host check.
+    if sys.platform.startswith("linux"):
+        if not Path(str(colmap)).is_file() and not Path(str(colmap).replace("/mnt/g", "G:").replace("/", "\\")).is_file():
+            raise SystemExit(f"COLMAP executable missing: {colmap}")
+    elif not colmap.is_file():
         raise SystemExit(f"COLMAP executable missing: {colmap}")
     dense = workspace / "dense"
     sparse = workspace / "sparse" / "0"
     if not args.skip_run:
+        # Fresh dense workspace (undistorter refuses to overwrite existing images)
+        if dense.is_dir():
+            import shutil
+            shutil.rmtree(dense)
         write_model(sparse, frames)
         run([colmap, "image_undistorter", "--image_path", images, "--input_path", sparse,
              "--output_path", dense, "--output_type", "COLMAP"], "undistort", workspace)
@@ -136,6 +149,9 @@ def main():
                       "--workspace_format", "COLMAP", "--PatchMatchStereo.geom_consistency", "true"]
         if args.max_image_size:
             patch_args += ["--PatchMatchStereo.max_image_size", str(args.max_image_size)]
+        if args.depth_min > 0 and args.depth_max > 0:
+            patch_args += ["--PatchMatchStereo.depth_min", str(args.depth_min),
+                           "--PatchMatchStereo.depth_max", str(args.depth_max)]
         run(patch_args, "patch_match", workspace)
     depth_dir = dense / "stereo" / "depth_maps"
     normal_dir = dense / "stereo" / "normal_maps"
