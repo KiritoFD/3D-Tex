@@ -17,6 +17,7 @@ Subcommands
              as capture_eval.py, no fusion; per-view table for LOO)
     score    deployable per-view signals (quality / redundancy / consistency)
     loo      leave-one-out driver over a 32-view run dir + random-deletion controls
+    fusion   fixed-prediction fusion exclusions, random controls or exhaustive LOO
     viz      visual review panels (depth/normal/errors, mesh z-buffer views)
 
 Everything is parameterized; paths default to this repo's layout but are not
@@ -871,6 +872,69 @@ def cmd_loo(args):
 
 # ----------------------------------------------------------------------------- viz
 
+def cmd_fusion(args):
+    """Fusion-only marginal contributions, with the full camera alignment frozen."""
+    capture, out = Path(args.capture), Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    cameras = json.loads((capture / "geometry/omega/cameras.json").read_text())
+    stems = sorted(Path(f["frame"]).stem for f in cameras["frames"])
+    groups = {"full": []}
+    if args.mode == "loo":
+        groups.update({f"minus_{s}": [s] for s in stems})
+    else:
+        scores = json.loads(Path(args.scores).read_text())
+        if not 0 < args.drop_count < len(stems):
+            raise ValueError("drop-count must leave at least one view")
+        groups[f"worst{args.drop_count}"] = sorted(stems, key=lambda s: (scores[s]["reproj_inlier_mean"], s))[
+            :args.drop_count]
+        rng = np.random.default_rng(args.seed)
+        groups.update({f"random{i}": sorted(rng.choice(stems, args.drop_count,
+                                                       replace=False).tolist())
+                       for i in range(args.draws)})
+    config = {"capture": str(capture.resolve()), "groups": groups,
+              "weight_mode": args.weight_mode, "seed": args.seed,
+              "camera_sha256": hashlib.sha256(
+                  (capture / "geometry/omega/cameras.json").read_bytes()).hexdigest()}
+    selection = out / "selection.json"
+    if selection.is_file() and json.loads(selection.read_text()) != config:
+        raise ValueError("fusion experiment configuration changed; use a fresh output directory")
+    selection.write_text(json.dumps(config, indent=2) + "\n")
+    reports = {}
+    for name, excluded in groups.items():
+        saved = out / f"{name}_report.json"
+        if not saved.is_file():
+            cmd = [sys.executable, str(SCRIPTS / "capture/capture_eval.py"),
+                   "--capture", str(capture), "--out", str(out), "--case", name,
+                   "--weight-mode", args.weight_mode]
+            if excluded:
+                cmd += ["--exclude-fusion-stems", ",".join(excluded)]
+            with (out / f"{name}.log").open("w") as log:
+                subprocess.run(cmd, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, check=True)
+            saved.write_text((out / "ablation_report.json").read_text())
+        reports[name] = json.loads(saved.read_text())
+        print(f"[fusion] {name}: excluded {excluded}", flush=True)
+    report = dict(reports["full"])
+    report["cases"] = {name: r["cases"][name] for name, r in reports.items()}
+    report["selection_groups"] = groups
+    (out / "ablation_report.json").write_text(json.dumps(report, indent=2) + "\n")
+    with (out / "measure.log").open("w") as log:
+        subprocess.run([args.blender, "-b", "--disable-autoexec", "--python",
+                        str(SCRIPTS / "diagnostics/measure_surfaces.py"), "--", "--out", str(out),
+                        "--source-flags", str(ROOT / "outputs/lego_source_edge_flags.npy")],
+                       cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, check=True)
+    metrics = json.loads((out / "surface_metrics.json").read_text())["cases"]
+    full = metrics["full"]["fscore_1_voxel"]["fscore"]
+    rows = [{"case": name, "excluded": groups[name],
+             **r["fscore_1_voxel"],
+             "delta_fscore": r["fscore_1_voxel"]["fscore"] - full}
+            for name, r in metrics.items()]
+    summary = {"protocol": "fixed predictions, full-set Sim3 and observed-GT evaluation; "
+                            "positive delta_fscore means omission improves the mesh; "
+                            "GT marginal ranking is an oracle diagnostic, not a deployable selector",
+               "rows": sorted(rows, key=lambda r: -r["delta_fscore"])}
+    (out / "fusion_report.json").write_text(json.dumps(summary, indent=2) + "\n")
+    print(json.dumps(summary, indent=2), flush=True)
+
 def cmd_viz(args):
     from PIL import Image
     import cv2
@@ -1016,6 +1080,18 @@ def main():
     p.add_argument("--min-free-gib", type=float, default=5.0)
     p.add_argument("--wait-seconds", type=float, default=3600)
     p.set_defaults(fn=cmd_loo)
+
+    p = sub.add_parser("fusion")
+    p.add_argument("--capture", required=True)
+    p.add_argument("--out", required=True)
+    p.add_argument("--blender", required=True, help="Blender executable for source-triangle metrics")
+    p.add_argument("--mode", choices=["controls", "loo"], default="controls")
+    p.add_argument("--scores", default=str(ROOT / "outputs/viewsel/scores_ab.json"))
+    p.add_argument("--drop-count", type=int, default=4)
+    p.add_argument("--draws", type=int, default=3)
+    p.add_argument("--seed", type=int, default=20261103)
+    p.add_argument("--weight-mode", choices=["uniform", "confidence"], default="uniform")
+    p.set_defaults(fn=cmd_fusion)
 
     p = sub.add_parser("viz")
     p.add_argument("--gt", required=True)

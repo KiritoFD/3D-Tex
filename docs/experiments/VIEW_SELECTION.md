@@ -167,7 +167,7 @@ subset of itself. A joint-deletion check (drop all flagged views at once vs the 
 number of random views) tests the known caveat that two redundant views can be
 individually removable but not jointly.
 
-### Results / protocol audit (2026-11-03, 18:45 CST)
+### Results / protocol audit (2026-11-03)
 
 **No valid individual negative-contributor ranking yet.** Eight deletion runs
 completed (`r_0,r_1,r_13,r_15,r_20,r_23,r_24,r_26`), but their manifests record
@@ -191,7 +191,7 @@ it demonstrates severe interference but does not calibrate a normal-capture
 rejection threshold. Its 16 core views reach abs-rel 17.252%, normal 46.82°,
 and relative rotation error 11.579° (`outputs/viewsel/b5_eval.json`).
 
-### Next: distinguish removing an input from omitting its fusion contribution
+### Fusion-only deletion controls (completed 2026-11-03)
 
 Keep AB's full 32-view prediction and all 32 camera centres for the same Sim3.
 Omit only four views from TSDF, chosen by the lowest no-GT foreground
@@ -201,10 +201,50 @@ the same observed GT point set, voxel grid and all-view structure evaluation.
 This tests fusion selection without rerunning VGGT or changing the alignment.
 It is distinct from input LOO, which changes model predictions too.
 
+| Fusion subset | Excluded views | F@1vox | P | R | sharp P | hole_fill |
+|---|---|---:|---:|---:|---:|---:|
+| full 32 | none | 0.57360 | 0.48104 | 0.71028 | 0.25209 | 0.99805 |
+| worst consistency 4 | r_53,r_42,r_26,r_32 | **0.56956** | 0.47920 | 0.70192 | 0.25951 | 0.99636 |
+| random 0 | r_23,r_32,r_84,r_87 | 0.58536 | 0.49626 | 0.71346 | 0.26365 | 0.99575 |
+| random 1 | r_13,r_20,r_9,r_92 | 0.57092 | 0.48306 | 0.69786 | 0.25875 | 0.99486 |
+| random 2 | r_20,r_23,r_7,r_9 | **0.59359** | 0.51390 | 0.70252 | 0.28166 | 0.99673 |
+
+The heuristic loses 0.00404 F versus full fusion and is worse than all three
+equal-count random controls. **Reject lowest-reprojection-inlier-ratio as the
+current automatic view-removal rule.** Random deletion sometimes helps, but
+even the best of these three draws is below E0's 16-view F 0.6212. Three random
+draws are a small control set, not a statistical claim of general superiority.
+The hole-fill metric stays near one: no tested deletion recovers the openings.
+
+Evidence: `outputs/viewsel/fusion_selection/{selection.json,surface_metrics.json,
+fusion_report.json,*_report.json}`. Full32 reproduces the previous E2 F exactly;
+all groups retain the full 32-view alignment and all GT evaluation observations.
+No threshold or deletion count was tuned against the resulting F scores.
+
 `capture_eval.py --exclude-fusion-stems` implements this control and records
 the excluded stems and alignment-view count. No GT depth error is used to
 choose the four views. The diagnostic still uses GT foreground/grid as in P0,
 so a positive result would not yet establish an end-to-end deployment gain.
+
+### Continuing work / live state
+
+- **Fusion LOO:** omit each of the 32 depth maps individually while keeping
+  full-run predictions, Sim3 and evaluation observations fixed. Rank by
+  `F(S without i) - F(S)`; positive means a negative fusion contributor. This
+  is a GT oracle diagnosis, distinct from deployable selection and input LOO.
+  Follow with joint omission versus equal-count random controls; do not assume
+  individually removable views remain safe to remove together.
+- **Input LOO:** corrected bf16 sweep is queued at `outputs/viewsel/loo_bf16`.
+  At the 20:24 CST check, inference had not started: host free commit was about
+  3 GiB versus the existing 8 GiB load gate (VRAM about 6.9 GiB was sufficient).
+  Logs: `outputs/viewsel/loo_bf16.{stdout,stderr}.log`. Preserve the gate because
+  earlier checkpoint loads crashed under host memory pressure. This is pending
+  work, not a completed negative-view ranking.
+- **Geometry optimisation:** WSL nvdiffrast is available (see
+  `ENVIRONMENT_WSL.md`); renderer bring-up is not evidence of an M2 mesh gain.
+  The previous Windows M2 run stopped with CUDA OOM, and the adopted geometric
+  reference remains v35c30+confidence F 0.6315. Prioritise resolving the fusion
+  contribution diagnosis before adding another competing GPU training job.
 
 ## Deployable view-selection signals (no GT)
 
@@ -266,3 +306,16 @@ blender -b --disable-autoexec --python scripts/diagnostics/measure_surfaces.py -
 For the corrected sweep, replace `--work outputs/viewsel/loo` with
 `--work outputs/viewsel/loo_bf16` in both commands. Supply `--anchor-stems`
 with the comma-separated `anchor16` list from `selection.json` for core references.
+
+```powershell
+# Same model predictions and full-set alignment; no-GT worst4 + 3 random controls.
+# $blender is the full path to the local Blender executable.
+.venv/Scripts/python.exe scripts/view_selection.py fusion `
+    --capture data/scenes/viewsel/cases/e2 --out outputs/viewsel/fusion_selection `
+    --blender $blender --mode controls --drop-count 4 --draws 3 --seed 20261103
+
+# Next experiment: exhaustive fusion-only LOO (CPU fusion + Blender BVH metrics).
+.venv/Scripts/python.exe scripts/view_selection.py fusion `
+    --capture data/scenes/viewsel/cases/e2 --out outputs/viewsel/fusion_loo `
+    --blender $blender --mode loo
+```
