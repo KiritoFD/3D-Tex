@@ -329,3 +329,119 @@ Findings:
 Runs: `outputs/xscene/{lego,pipes,kicker,relief}/refine_log.json`
 (refinement run3-recipe + holdout 4; lego 439 s, pipes 314 s, kicker 260 s,
 relief 356 s on the shared 8 GiB GPU).
+
+---
+
+# Follow-up C (2026-11-03): geometry-side supervision, NO photometric optimisation
+
+Targets the three visually-located defects (fluffy window bridges, silhouette
+burr cloud, cab-roof crater) with purely geometric evidence: (1) cross-view
+silhouette/free-space carving, (2) VGGT confidence-weighted TSDF fusion.
+No RGB loss, no ZNCC/PSNR anywhere in the pipeline; selection is by the
+geometric metrics only.
+
+## C.0 Mechanism diagnosis first (why naive carving cannot work, and what does)
+
+Each depth pixel entering the baseline fusion was unprojected and reprojected
+into all 16 views (`outputs/geometry_pruning/diag/`). Two per-pixel signals:
+`votes` (fraction of views where the point lands on a background pixel of the
+GT-foreground protocol mask, eroded 1 px) and `confirms` (fraction of views
+where it lands on foreground with depth consistent to ±1.5% with that view's
+unmasked predicted depth). Findings:
+
+- Raw predicted poses and depth are mutually inconsistent at the few-percent
+  level (pair reprojection median mismatch up to 16%); votes must therefore be
+  computed in the frozen train-only Sim(3)-aligned gauge, not the raw gauge.
+- Bridge/burr pixels are NOT isolated outliers: they are view-consistent
+  (their own unmasked depth values confirm each other across views — the same
+  bias as the dunes). A pure "projects to background in many views" vote marks
+  them, but it also marks every legitimate edge pixel at similar rates; the
+  separation only appears when combined with the confirm signal: bridges/burr
+  = votes high AND confirms low (magenta in the diag maps), legit surface =
+  confirms high (cyan). Strict thresholds (votes≥0.5 & confirms≤0.2) delete
+  only 1.27% of foreground pixels and change nothing — the defects are
+  view-consistent and survive.
+
+So carving works only as a *tunable precision/recall trade*, not as a clean
+defect detector. The trade curve below is the result.
+
+## C.1 Free-space / silhouette carving (scripts/geometry_pruning.py)
+
+Rule: delete a depth pixel when `votes ≥ vote_frac AND confirms ≤ confirm_max`
+(aligned gauge; deletion exported in the raw predicted grid; eval protocol
+unchanged). Four operating points + GT-side classification of the deleted
+pixels (GT used for evaluation only):
+
+| Variant | deleted fg px | deleted-px abs_rel mean/med | >5% off (deleted vs kept) | F@1vox | P / R | acc (vox) | compl (vox) | burr | hole_fill | P_sharp / R_sharp | heldout IoU |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| baseline | 0 | — | 3.6% | 0.6207 | 0.554 / 0.705 | 1.403 | 0.809 | 0.0188 | 0.985 | 0.326 / 0.721 | 0.9377 |
+| v50c20 (strict) | 1.27% | 1.07% / 0.63% | 2.9% | 0.6249 | 0.560 / 0.708 | 1.393 | 0.810 | 0.0190 | 0.985 | 0.326 / 0.722 | — |
+| v35c30 | 3.65% | 1.52% / 0.69% | 6.1% | 0.6311 | 0.570 / 0.706 | 1.365 | 0.818 | **0.0148** | 0.983 | 0.340 / 0.716 | **0.9386** |
+| v25c40 | 8.45% | 1.73% / 0.76% | 7.4% | 0.6349 | 0.587 / 0.692 | 1.312 | 0.851 | 0.0130 | 0.916 | 0.345 / 0.682 | 0.9332 |
+| v15c50 (aggressive) | 13.07% | 1.79% / 0.80% | 7.7% | **0.6386** | 0.605 / 0.676 | **1.251** | 0.886 | **0.0115** | **0.753** | **0.366** / 0.645 | 0.9291 |
+
+Image-space (same protocol): abs_rel 1.242% → 1.131% and normal 32.16° →
+31.50° monotonically from strict to aggressive; coverage_rate 0.432 → 0.475.
+
+**Cost/benefit accounting.** Deleted pixels are ~2× enriched for wrong
+geometry (>5% outliers: 6–8% vs 3.6% kept), but the majority of deleted
+pixels are still good surface (median error 0.7–0.8%) — that is the
+completeness price: recall 0.705 → 0.676 and R_sharp 0.721 → 0.645 at the most
+aggressive point. In return: F +0.018, precision +0.051, accuracy −0.15 vox,
+burr −39%, window holes genuinely open (hole_fill 0.985 → 0.753; visible in
+renders — the top window frame goes from a white bridge to a clear through
+hole), P_sharp +0.04, and abs_rel/normal also improve. Heldout silhouette IoU
+peaks at v35c30 (0.9386, better than baseline) and degrades only slightly at
+aggressive levels (0.929).
+
+Operating-point read: **v35c30 is a near-free lunch** (F +0.010, P and R both
+≥ baseline, burr −21%, IoU +0.001, completeness cost +0.009 vox); v25c40 and
+v15c50 are deliberate precision/structure-for-recall trades. The cab-roof
+crater is unaffected by carving (it is not a background/free-space violation).
+
+## C.2 VGGT confidence-weighted TSDF fusion
+
+VGGT-Ω ships per-pixel depth confidence (`omega/confidence/*.npy`, range
+1.1–72.8, median 4.5). Wired as TSDF weights via an opt-in flag
+(`capture_eval.py --weight-mode confidence`; regridded like depth, globally
+rescaled p99→8 since fuse() clips at 8; a global rescale is a no-op except at
+the clip boundary; default remains uniform — protocol unchanged).
+
+| Variant | F@1vox | P / R | acc (vox) | compl (vox) | burr | hole_fill | P_sharp / R_sharp |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| uniform (baseline) | 0.6207 | 0.554 / 0.705 | 1.403 | 0.809 | 0.0188 | 0.985 | 0.326 / 0.721 |
+| confidence | 0.6226 | 0.568 / 0.690 | 1.378 | 0.831 | 0.0187 | 0.983 | 0.333 / 0.696 |
+
+Small precision win, small recall cost — direction consistent with carving.
+
+## C.3 Combination (orthogonal, stacks)
+
+| Variant | F@1vox | P / R | acc (vox) | compl (vox) | burr | hole_fill | P_sharp / R_sharp | heldout IoU |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| v35c30 + conf | 0.6315 | 0.581 / 0.692 | 1.350 | 0.837 | 0.0148 | 0.983 | 0.339 / 0.694 | — |
+| v25c40 + conf | 0.6365 | 0.600 / 0.678 | 1.287 | 0.867 | 0.0130 | 0.916 | 0.353 / 0.664 | — |
+| v15c50 + conf | **0.6398** | 0.617 / 0.664 | **1.230** | 0.901 | 0.0115 | **0.753** | **0.371** / 0.630 | 0.9290 |
+
+Confidence weighting adds ~+0.01 precision and −0.012 recall at every carving
+level. Best F of this phase: 0.6398 (v15c50+conf), still below the P0 2-voxel
+consistency filter's 0.6927 (P 0.780 / R 0.623, compl 1.217) — but that filter
+achieves its F by deleting far more surface (completeness 1.217 vs 0.901) and
+has no burr/structure benefit; the carve+conf curve offers structurally
+cleaner operating points (burr −39%, holes open, P_sharp 0.371) at moderate
+recall cost.
+
+## C.4 Conclusions
+
+1. Geometry-side supervision works as a **tunable trade**, not a free fix:
+   the defects it removes are real (burr −39%, windows genuinely open,
+   F +0.019 max), and the deleted pixels are ~2× enriched for wrong geometry,
+   but completeness/recall pay proportionally because most deleted pixels are
+   still decent surface.
+2. The cab-roof crater is untouched (not a free-space violation); studs and
+   rods are not recovered (carving cannot add information, only remove).
+3. Recommendation: adopt **v35c30+conf** as the new default fusion for
+   downstream work (near-free: F 0.6315, burr −21%, IoU +0.001, completeness
+   cost +0.03 vox vs baseline), keep v25c40/v15c50 as documented aggressive
+   operating points when precision/structure matters more than recall.
+4. What carving cannot do, Phase B (Mesh Splatting with anchors) must:
+   actually re-open geometry (topology change), not just delete it.

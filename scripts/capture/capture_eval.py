@@ -116,6 +116,10 @@ def main():
                              "Depth must be camera z-depth on the GT camera grid (800^2)")
     parser.add_argument("--split-sigma", type=float, default=8.0,
                         help="Gaussian sigma (px) splitting low/high frequency depth residual")
+    parser.add_argument("--weight-mode", choices=["uniform", "confidence"], default="uniform",
+                        help="confidence uses <pred>/confidence/<stem>.npy as TSDF weights, "
+                             "regridded like depth and globally rescaled so p99 -> 8 (fuse clips "
+                             "at 8; a global rescale is a no-op except at the clip boundary)")
     args = parser.parse_args()
     capture, out = Path(args.capture), Path(args.out)
     case = args.case or capture.name
@@ -152,6 +156,7 @@ def main():
 
     frames = []
     gt_frames = []
+    confs = []
     rel_all, ang_all, flat_all, edge_all, scale_low, scale_high = [], [], [], [], [], []
     for index, frame in enumerate(records):
         stem = Path(frame["frame"]).stem
@@ -173,6 +178,21 @@ def main():
             u = (xx - k[0, 2]) / k[0, 0] * pk[0, 0] + pk[0, 2]
             v = (yy - k[1, 2]) / k[1, 1] * pk[1, 1] + pk[1, 2]
             d = np.where(foreground, regrid_depth(raw, u, v, "nearest"), 0).astype(np.float32)
+        if args.weight_mode == "confidence":
+            conf_path = pred / "confidence" / f"{stem}.npy"
+            if not conf_path.is_file():
+                raise SystemExit(f"--weight-mode confidence but missing {conf_path}")
+            conf_raw = np.load(conf_path).squeeze().astype(np.float32)
+            if args.geometry_dir:
+                if conf_raw.shape != reference.shape:
+                    import cv2
+                    conf_raw = cv2.resize(conf_raw, (reference.shape[1], reference.shape[0]),
+                                          interpolation=cv2.INTER_NEAREST)
+            else:
+                conf_raw = regrid_depth(conf_raw, u, v, "nearest").astype(np.float32)
+            confs.append(conf_raw)
+        else:
+            confs.append(None)
         frames.append({"depth": d, "K": k, "T": aligned[index], "rgb": None})
         gt_frames.append({"depth": reference, "K": k, "T": gts[index],
                           "foreground": foreground})
@@ -190,8 +210,11 @@ def main():
         edge_all.append(angle[gt_edge_mask(reference) & nv])
 
     started = time.time()
-    field, _, weight = fuse(origin, voxel, shape, trunc, frames, 0, 100, [None] * len(frames),
-                            "uniform", 64, 1, sample_mode=args.fusion_sample)
+    if args.weight_mode == "confidence":
+        p99 = float(np.percentile(np.concatenate([c[c > 0] for c in confs if c is not None]), 99))
+        confs = [c * (8.0 / max(p99, 1e-9)) if c is not None else None for c in confs]
+    field, _, weight = fuse(origin, voxel, shape, trunc, frames, 0, 100, confs,
+                            args.weight_mode, 64, 1, sample_mode=args.fusion_sample)
     vertices, faces, normals = extract_surface(field, voxel)
     vertices += origin
     folder = out / case
@@ -220,6 +243,7 @@ def main():
         "scale": float(scale), "rotation": rotation.tolist(), "translation": translation.tolist(),
         "voxel": voxel, "truncation": trunc, "origin": origin.tolist(), "shape": list(map(int, shape)),
         "fusion_sample": args.fusion_sample,
+        "weight_mode": args.weight_mode,
         "depth_on_gt_grid": {"abs_rel": summarize(rel),
                              "normal_deg": summarize(np.concatenate(ang_all)),
                              "normal_deg_flat": summarize(np.concatenate(flat_all)),
