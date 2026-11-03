@@ -12,10 +12,20 @@ issues are in `docs/experiments/CAPTURE_GUIDELINES.md`; raw data in
 | Geometry | F@1vox | P / R | accuracy (vox) | completeness (vox) |
 |---|---:|---:|---:|---:|
 | VGGT-Ω depth → TSDF (baseline) | 0.6206 | 0.554 / 0.705 | 1.403 | 0.809 |
+| **v35c30 carve + confidence (adopted default, "无代价档")** | **0.6315** | 0.581 / 0.692 | 1.350 | 0.837 |
 | + 2-voxel consistency filter | 0.6927 | 0.780 / 0.623 | 0.676 | 1.217 |
 | PGSR 10k → TSDF (negative result) | 0.3324 | 0.308 / 0.361 | 3.182 | 2.201 |
 | ExMesh 10k (existing asset) | 0.6190 | 0.615 / 0.624 | 1.107 | 1.069 |
 | GT cameras + GT depth (ceiling) | 0.9357 | 0.919 / 0.953 | 0.360 | 0.311 |
+
+**Adopted reference for all downstream experiments: v35c30+conf** (free-space
+carve at vote_frac 0.35 / confirm_max 0.3 + confidence-weighted fusion;
+P1_DEPTH_REFINEMENT.md Follow-up C). It is the *no-cost* operating point —
+F +0.011, P and R both ≥ old baseline, burr −21%, heldout IoU +0.001 — not the
+max-F point. Deliberate aggressive alternatives, full trade table in Follow-up C:
+v25c40+conf (F 0.6365, P 0.600 / R 0.678) and v15c50+conf (F 0.6398, P 0.617 /
+R 0.664, burr −39%, hole_fill 0.753). The 2-voxel filter stays the max-F /
+min-recall option.
 
 Target for the next phase: **F@1vox > 0.70 with recall ≥ 0.705** and lower
 normal error. Gap from the full-recall baseline: +0.08 F without losing recall.
@@ -93,49 +103,57 @@ an information limit).
 | ExMesh continuation | bounded by initial geometry quality | medium | not before depth improves; 10k already at F 0.6190 |
 | More PGSR tuning | negative in this configuration | — | do not retry without changing view coverage/geometry supervision |
 
-## Phase B plan — Mesh Splatting with geometric anchors (for the next session)
+## Phase B plan — Mesh Splatting with geometric anchors (feasibility decomposition, 2026-11-03)
 
 Paper: **"Mesh Splatting for End-to-end Multiview Surface Reconstruction"**
 (Zhang, Wu, Chen; ICLR 2026 Poster; arXiv 2601.21400; OpenReview PSgps4JXTb).
 Multi-layer semi-transparent mesh "softening" differentiable w.r.t. a base
-mesh, splatting renderer, ~20 min optimization; **DMTet reparameterization in
-the early stage (≈5k steps) for topology control, continuous remeshing later
-(≈10k steps)**. NOT the same work as CVPR 2026 "MeshSplatting: Differentiable
-Rendering with Opaque Meshes" (Held et al., arXiv 2512.06818,
-meshsplatting.github.io) — do not mix them up.
+mesh, splatting renderer, ~20 min optimization; DMTet early (≈5k steps),
+continuous remeshing later (≈10k). NOT the same work as CVPR 2026
+"MeshSplatting: Differentiable Rendering with Opaque Meshes" (Held et al.,
+arXiv 2512.06818, meshsplatting.github.io).
 
-Feasibility probe (2026-11-03): paper and reviews verified; **no public code
-repository found** (checked OpenReview page, arXiv listing, author pages and
-GitHub search — nothing released as of this date). Before any implementation
-work: re-check for an official release; if absent, either email the authors or
-treat "reimplement from the paper" as the real cost (renderer + DMTet +
-remeshing stack; kaolin/diff-gaussian-rasterization ecosystems cover the
-building blocks on paper). Windows compatibility unknown until code exists;
-the splatting rasterizers in this ecosystem are CUDA+Linux-first, so WSL is
-the likely runtime (same pattern as our COLMAP build). VRAM: 8 GiB is below
-the typical default for multi-layer mesh splatting at 800²; budget for
-image-resolution reduction (model grid 512² or 256²) and/or fewer layers.
+**Feasibility probe: no public code found** (OpenReview, arXiv, author pages,
+GitHub — nothing released as of 2026-11-03). Therefore the plan below targets a
+**minimal viable subset** — "multi-layer softening + geometric anchor
+supervision on our existing TSDF mesh" — not a replication of the full
+DMTet+remeshing stack, and no big-repo clones or environment changes before
+the feasibility questions are answered.
 
-Integration plan (when code/reimplementation exists):
-1. Input: VGGT cameras + depth → initial mesh from the EXISTING frozen TSDF
-   pipeline (baseline mesh, F 0.6207) as the DMTet-stage initialisation —
-   do not train from a primitive shape; the goal is to repair, not to
-   rediscover.
-2. Required added supervision (their default is RGB + normal losses, which on
-   our evidence would reproduce "ZNCC up, geometry down"):
-   - **trusted depth anchors**: gate-passing COLMAP pixels (Follow-up A gate
-     logic, cost1/cost2 levels) as sparse hard depth constraints;
-   - **silhouette loss**: rendered alpha vs image alpha matte (dataset masks,
-     no GT geometry involved);
-   - **free-space constraint**: rays through the background matte must not
-     generate solid surface — directly attacks the burr cloud;
-   - **edge-aware normal/curvature regularisation** on the base mesh, to
-     protect true creases instead of flattening them.
-3. Acceptance: same frozen protocol (capture_eval + measure_surfaces +
-   heldout 4-view renders), reporting P and R separately, structure survival
-   (stud array / rod & spoke connectivity / window holes open), burr rate —
-   per the acceptance criteria in the P1 follow-up. Selection by geometric
-   metrics only; no photometric-loss-based early stopping.
+### Component decomposition (minimal subset)
+
+| # | Component | What it must do | Existing alternative in this repo / ecosystem | Verdict |
+|---|---|---|---|---|
+| 1 | Differentiable renderer for a triangle mesh (silhouette + depth, no shading needed) | rasterize mesh to per-view alpha + depth with gradients w.r.t. vertex positions | nvdiffrast (Windows wheels exist, used by many mesh-optim repos); pytorch3d SoftSilhouetteRasterizer (pure torch, installs on Windows); as a last resort a custom splat rasterizer (torch scatter, the mesh is only ~400k tris) | **viable** |
+| 2 | Multi-layer softening | turn the base mesh into K semi-transparent layers at offsets δ_k along vertex normals, blend weights by distance to base mesh | ~100 lines of torch on top of component 1 (layers = K renders of the same mesh with vertex offsets) | **viable** |
+| 3 | Anchor losses (no RGB) | (a) trusted depth anchors: gate-passing COLMAP pixels (Follow-up A gate, cost1/cost2) and/or mixed-run crop depth in structure regions (Follow-up D) as hard depth constraints; (b) silhouette loss: rendered alpha vs dataset alpha matte; (c) free-space: penalty on any rendered occupancy along background rays (reuses geometry_pruning votes, now on the differentiable side); (d) edge-aware normal/curvature regulariser on the base mesh | all data already produced (gates, masks, vote maps) | **viable** |
+| 4 | Optimisation loop | Adam on vertex positions (optionally per-vertex scalar offset along normals), 400k verts; a few hundred iterations at 512², 16 views | refine_depth.py already runs this scale (peak <2 GiB) | **viable** |
+| 5 | Evaluation | frozen protocol (capture_eval + measure_surfaces + heldout renders); selection by geometric metrics only | exists | **viable** |
+| 6 | Deferred: DMTet reparameterisation + remeshing (topology change) | only needed if the crater/studs need actual topology surgery | kaolin DMTet (pip, Linux-first; WSL path same as COLMAP); decide after the minimal subset result | deferred |
+
+VRAM budget: 16 views × 512² depth/alpha render at ~400k tris ≪ 2 GiB per
+layer set; K=3–5 layers still fits 8 GiB. Runtime estimate: minutes per run.
+
+### Time-box and give-up conditions
+
+- **M1 (spike)**: components 1–2 working — render the baseline mesh
+  differentiably at the 16 train views, verify gradients flow (one Adam step
+  reduces a toy target), all on Windows torch. If nvdiffrast/pytorch3d cannot
+  be installed on this host in one attempt, fall back to WSL (proven pattern),
+  and if that fails too, stop — subset is dead.
+- **M2 (anchor run)**: baseline mesh + anchor losses only (no RGB, no
+  softening), 300–800 iters. Acceptance: F@1vox ≥ the v35c30+conf reference
+  (0.6315) with structure survival not worse; burr ↓ without new fringe.
+- **M3 (softening run)**: add multi-layer softening. Acceptance: **F@1vox ≥
+  0.65** AND a measurable structure improvement vs M2 (hole_fill ↓ from 0.98
+  without recall collapse, or crater visibly reduced in renders).
+- **Give-up conditions**: M1 fails for environment reasons; M2 cannot reach
+  the 0.6315 reference; M3 cannot reach F 0.65 or leaves structure survival
+  unchanged → stop and switch to Phase C (residual SDF) or a stronger depth
+  estimator, per the route table.
+- Hard rule for M2/M3: **no RGB/photometric loss and no loss-based model
+  selection** anywhere (P1 negative result); selection by geometric metrics
+  only, on the same frozen protocol with heldout renders.
 
 ## Phase C plan — ADELE-style residual SDF (research plan only, do not start)
 

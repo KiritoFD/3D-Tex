@@ -445,3 +445,74 @@ recall cost.
    operating points when precision/structure matters more than recall.
 4. What carving cannot do, Phase B (Mesh Splatting with anchors) must:
    actually re-open geometry (topology change), not just delete it.
+
+---
+
+# Follow-up D (2026-11-03): tiling / crop probe — is the structure loss an effective-resolution problem?
+
+Question: the melted studs / wheel spokes / window frames are tens of pixels
+across at full-frame capture. The group-3 resolution axis (whole-image
+downsampling 256–800²) was nearly flat, so it cannot say whether *structure-scale*
+resolution is the limit. Probe: crop a structure region per view around the
+projected 3-D region (back-projected from the anchor16 predicted geometry, no
+GT used), re-run VGGT-Ω on the crops, compare depth/normal quality in-region.
+
+Setups (all 16 anchor views, model input 512²):
+- **crop-only**: 16 crop images per region (crop sides 293–519 px → effective
+  zoom 1.5–2.7×), poses from the crop run itself.
+- **mixed**: 16 full images + 16 roofwin crops + 16 wheels crops in ONE joint
+  run (48 images; full images anchor the trajectory).
+
+## D.1 Trajectory health (train-only Sim3 residual on camera centres)
+
+| Run | scale | resid med | resid max | Verdict |
+|---|---:|---:|---:|---|
+| full-frame anchor16 | 4.7232 | 0.029 | 0.054 | reference |
+| crop-only roofwin | 4.1188 | **0.245** | 0.477 | trajectory broken (8× worse) |
+| crop-only wheels | 4.6969 | **0.167** | 0.403 | broken |
+| mixed (full views) | 4.8524 | 0.048 | 0.131 | ≈ anchored (full images keep registration) |
+
+Crop-only sets destroy multi-view registration: each view's crop shows a
+different part of the object, so the tracker drifts. Keeping the full-frame
+images in the same run anchors it back to near-baseline.
+
+## D.2 Region depth / normal quality (scale-matched per view; GT evaluation only)
+
+| Region | abs_rel base / crop / mixed | normal flat° base / crop / mixed | normal edge° base / crop / mixed |
+|---|---|---|---|
+| roofwin | 1.54% / 2.54% / 1.70% | 17.51 / 15.50 / 18.27 | 32.96 / **26.83** / **26.61** |
+| wheels | 1.40% / 1.78% / **1.36%** | 15.81 / 13.82 / **13.66** | 35.40 / **28.91** / **29.44** |
+
+## D.3 Structure recovery (normal-map visual review, GT | base | crop | mixed)
+
+Images: `outputs/tiling/vis/{roofwin,wheels}_{r_0,r_13,r_33}_normals_gt_base_tiling_mix.png`.
+- roofwin r_0/r_13: GT shows the roof/bucket stud array as crisp rows of
+  circles; full-frame base melts it into blobs; **crop and mixed runs both
+  restore the stud array as countable discrete rows**, and the cab window
+  frame regains sharp edges.
+- wheels r_0: GT shows both wheel rims with spoke pattern + plate stud rows;
+  base melts them; **crop and mixed restore both rims with visible spokes and
+  the plate stud array** (slightly cleaner in mixed than crop-only).
+- Structure recovery is identical between crop-only and mixed; mixed fixes the
+  trajectory, so the structure gain becomes usable.
+
+## D.4 Conclusions
+
+1. **The melted structure is an effective-resolution problem, not (only) a
+   network-prior limit.** At 1.5–2.7× effective zoom the same network recovers
+   stud arrays, wheel rims and spokes that are melted at full-frame 512² —
+   the prior CAN represent them; full-frame capture does not give the region
+   enough tokens.
+2. **But crops alone break registration** (residual ×8, abs_rel 1.5→2.5%):
+   naive tiling is not a usable geometry pipeline. The usable form is
+   **mixed full-frame + close-up sets**: trajectory stays anchored (0.048)
+   while edge normals improve −6° and abs_rel matches or beats the baseline
+   in-region (wheels 1.36% vs 1.40%).
+3. The cab-roof crater persists in crop runs too (roof region is deepened,
+   not repaired) — that one is a genuine local-shape prior failure, not
+   resolution.
+4. Follow-up uses (not yet implemented): mixed-set capture for
+   structure-critical objects; crop-depth as high-confidence structural
+   anchors for Phase B; per-region TSDF fusion at the frozen voxel with
+   mixed-run crop depth as a replacement for baseline depth in structure
+   regions (needs a consistency rule for the boundary).
