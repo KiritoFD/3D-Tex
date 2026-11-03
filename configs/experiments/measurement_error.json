@@ -1,0 +1,43 @@
+{
+  "master": "data/scenes/measurement_precision/master",
+  "source": "data/.cache/nerf-syn/lego_source.blend",
+  "train_meta": "data/scenes/nerf_lego/transforms_train.json",
+  "views": 24,
+  "stud_pitch_mm": 8.0,
+  "rgb_source": "data/scenes/nerf_lego/images",
+  "root": "data/scenes/measurement_error_mm",
+  "out": "outputs/measurement_error_mm",
+  "rgb_run": "data/scenes/measurement_error/rgb24",
+  "observation_resolution": 256,
+  "noise_rms_mm": [0.0, 0.02, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0],
+  "noise_modes": ["iid", "view_bias"],
+  "seeds": [42, 43, 44],
+  "voxel_mm": 1.0,
+  "trunc_voxels": 4.0,
+  "fscore_thresholds_mm": [0.5, 1.0, 2.0],
+  "evaluation_samples": 50000,
+  "evaluation_seed": 20261104,
+  "model_resolution": 512,
+  "aggregator_dtype": "bfloat16",
+  "tsdf_voxel_divisor": 256,
+  "tsdf_truncation_voxels": 4.0,
+  "optimizer": {
+    "iters": 300,
+    "lr": 0.05,
+    "deformation": "lattice",
+    "lattice_spacing_voxels": 4,
+    "lambda_prior": 0.1,
+    "tolerance_voxels": 1,
+    "lambda_external": 1.0
+  },
+  "rgb_sweep": {
+    "root": "data/scenes/measurement_error_rgb",
+    "out": "outputs/measurement_error_rgb",
+    "modes": ["object_warp", "camera_jitter"],
+    "rms_mm": [0.0, 0.1, 0.5, 1.0, 5.0],
+    "resolution": 800,
+    "warp_correlation_pixels": 16.0,
+    "render_samples": 256,
+    "render_seed": 42
+  }
+}

@@ -37,6 +37,11 @@ def main():
     parser.add_argument("--lambda-prior", type=float, default=0., help="tolerance depth prior weight")
     parser.add_argument("--tolerance-voxels", type=float, default=2.)
     parser.add_argument("--lambda-colmap", type=float, default=0.)
+    parser.add_argument("--external-depth", help="controlled external scan with cameras.json and depth/")
+    parser.add_argument("--lambda-external", type=float, default=0.)
+    parser.add_argument("--pixel-center-offset", type=float, default=0.,
+                        help="use 0.5 for integer-index camera coordinates on raster pixel centers")
+    parser.add_argument("--perspective-projection", action="store_true")
     parser.add_argument("--colmap", default="outputs/colmap/sweep/anchor16/cost2_nc2")
     parser.add_argument("--anchor-poses", default="outputs/e2_anchor16_poses.json")
     parser.add_argument("--anchor-gate-voxels", type=float, default=4.)
@@ -47,6 +52,8 @@ def main():
     args = parser.parse_args()
     if args.voxel_size <= 0 or args.resolution % 16:
         raise ValueError("positive voxel-size and resolution divisible by 16 required")
+    if args.lambda_external and not args.external_depth:
+        raise ValueError("--lambda-external requires --external-depth")
     device = torch.device("cuda")
     torch.manual_seed(args.seed)
     out = Path(args.out)
@@ -68,7 +75,8 @@ def main():
         edges, degree, weights = regularizer_graph(initial, faces)
     views, provenance = load_views(args, device)
     depths = torch.cat([v["depth"][v["depth"] > 0] for v in views])
-    renderer = NvdRenderer(near=float(depths.min()) * .2, far=float(depths.max()) * 3)
+    renderer = NvdRenderer(near=float(depths.min()) * .2, far=float(depths.max()) * 3,
+                           perspective=args.perspective_projection)
     opt = torch.optim.Adam([parameter], lr=args.lr)
     omega_manifest = json.loads((Path(args.omega) / "manifest.json").read_text())
     log = {"args": vars(args), "provenance": provenance,
@@ -82,6 +90,12 @@ def main():
            "inputs": [v["name"] for v in views], "torch": torch.__version__,
            "gpu": torch.cuda.get_device_name(), "renderer": "nvdiffrast",
            "parameter_shape": list(parameter.shape), "iters": []}
+    if args.lambda_external:
+        external = Path(args.external_depth)
+        log["external_observations"] = {
+            "manifest": json.loads((external/"manifest.json").read_text()),
+            "depth_sha256": {v["name"]: hashlib.sha256(
+                (external/"depth"/f"{v['name']}.npy").read_bytes()).hexdigest() for v in views}}
     (out / "manifest.json").write_text(json.dumps(log, indent=2) + "\n")
     torch.cuda.reset_peak_memory_stats()
     started = time.time()
@@ -92,9 +106,11 @@ def main():
         # Accumulate image gradients on one vertex leaf, then backpropagate once
         # through the deformation map. This avoids 16 retained grid-sampling graphs.
         vertices = model_vertices.detach().requires_grad_(True)
-        values = dict(sil=0., fs=0., prior=0., colmap=0.)
+        values = dict(sil=0., fs=0., prior=0., colmap=0., external=0.)
         for view in views:
-            depth, alpha = renderer.render_frame(vertices, faces_i32, view["k"], view["t"], args.resolution)
+            raster_k = view["k"].clone()
+            raster_k[:2, 2] += args.pixel_center_offset
+            depth, alpha = renderer.render_frame(vertices, faces_i32, raster_k, view["t"], args.resolution)
             fg = view["fg"]
             terms = {"sil": (alpha - fg.float()).abs().mean(),
                      "fs": (alpha[~fg] ** 2).mean()}
@@ -105,6 +121,9 @@ def main():
             if args.lambda_colmap:
                 terms["colmap"] = tolerance_loss(depth, view["anchor"], view["confidence"],
                     (view["anchor"] > 0) & (alpha.detach() > .99), 0., args.voxel_size)
+            if args.lambda_external:
+                terms["external"] = tolerance_loss(depth, view["external"], torch.ones_like(depth),
+                    (view["external"] > 0) & (alpha.detach() > .99), 0., args.voxel_size)
             loss = sum(getattr(args, f"lambda_{key}") * val for key, val in terms.items()) / len(views)
             loss.backward()
             for key, val in terms.items():

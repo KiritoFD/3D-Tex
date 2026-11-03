@@ -9,11 +9,12 @@ class NvdRenderer:
     need. Gradients flow to vertex positions through barycentrics (depth) and
     through antialias coverage (alpha)."""
 
-    def __init__(self, near=1.0, far=10.0):
+    def __init__(self, near=1.0, far=10.0, perspective=False):
         import nvdiffrast.torch as dr
         self.dr = dr
         self.glctx = dr.RasterizeCudaContext()
         self.near, self.far = near, far
+        self.perspective = perspective
 
     def render_frame(self, vertices, faces_i32, k, t, res):
         cam = (t[:3, :3] @ vertices.transpose(-1, -2)).transpose(-1, -2) + t[:3, 3]
@@ -23,6 +24,9 @@ class NvdRenderer:
         x_ndc = (2 * k[0, 0] / res) * cam[..., 0] / z + (2 * k[0, 2] / res - 1)
         y_ndc = (2 * k[1, 1] / res) * cam[..., 1] / z + (2 * k[1, 2] / res - 1)
         z_ndc = (2 * z - self.near - self.far) / (self.far - self.near)
+        if self.perspective:
+            z_ndc = ((self.far+self.near)/(self.far-self.near)
+                     - (2*self.far*self.near)/(self.far-self.near)/z)
         clip = torch.stack([x_ndc * w, y_ndc * w, z_ndc * w, w], -1).contiguous()
         rast, _ = self.dr.rasterize(self.glctx, clip.unsqueeze(0), faces_i32,
                                     resolution=[res, res])

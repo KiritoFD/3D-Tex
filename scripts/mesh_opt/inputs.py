@@ -77,6 +77,17 @@ def load_views(args, device):
                       "fg": torch.tensor(fg, device=device),
                       "depth": torch.tensor(depth, device=device),
                       "confidence": torch.tensor(conf, device=device)})
+        if getattr(args, "lambda_external", 0):
+            if not gt:
+                raise ValueError("external scan pilot requires explicit diagnostic calibrated rig")
+            external = Path(args.external_depth)
+            calibration = {Path(f["frame"]).stem: f for f in json.loads(
+                (external/"cameras.json").read_text())["frames"]}
+            np.testing.assert_allclose(calibration[stem]["T_world_to_cam"], gt[stem]["T_world_to_cam"], atol=1e-7)
+            source_k = np.asarray(calibration[stem]["K_model"])
+            raw = np.load(external/"depth"/f"{stem}.npy")
+            target = remap(raw, source_k, k, args.resolution)
+            views[-1]["external"] = torch.tensor(target, device=device)
         if args.lambda_colmap:
             if not gt:
                 raise ValueError("current COLMAP anchors use GT intrinsics; diagnostic mode only")
@@ -95,4 +106,5 @@ def load_views(args, device):
     return views, {"scale": float(scale), "rotation": rotation.tolist(),
                    "translation": translation.tolist(), "gt_assisted": gt is not None,
                    "mask_source": "source-GT foreground" if gt else
-                                  ("external masks" if args.mask_dir else "dataset RGBA alpha")}
+                                  ("external masks" if args.mask_dir else "dataset RGBA alpha"),
+                   "external_scan": args.external_depth if getattr(args, "lambda_external", 0) else None}

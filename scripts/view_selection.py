@@ -434,7 +434,7 @@ def cmd_infer(args):
     random.seed(args.seed)
     device = pick_device(args.device)
     if device == "cuda":
-        wait_for_vram(args.min_free_gib, args.wait_seconds)
+        wait_for_vram(args.min_free_gib, args.wait_seconds, min_commit_gib=args.min_free_commit_gib)
     agg_dtype = pick_aggregator_dtype(args.aggregator_dtype, device)
     print(f"[plan] {len(paths)} frames -> {out} (device={device}, dtype={agg_dtype})", flush=True)
 
@@ -1108,6 +1108,8 @@ def main():
     p.add_argument("--image-resolution", type=int, default=512)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--min-free-gib", type=float, default=5.0)
+    p.add_argument("--min-free-commit-gib", type=float, default=8.0,
+                   help="host commit headroom before loading; does not change numerical inference")
     p.add_argument("--wait-seconds", type=float, default=3600)
     p.add_argument("--save-tokens", action="store_true")
     p.add_argument("--force", action="store_true")
