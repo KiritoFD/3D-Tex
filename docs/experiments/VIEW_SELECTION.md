@@ -1,9 +1,10 @@
 # View Selection: per-view marginal contribution to VGGT-Ω geometry
 
-Status: core groups (E0/E1/E2) measured; extreme groups B1–B6 measured; LOO + random
-controls measured; deployable-signal validation done. **Numbers below are final unless
-marked pending.** Independent experiment; does not modify GEOMETRY_OPTIMIZATION.md,
-P1_DEPTH_REFINEMENT.md or CAPTURE_*.md.
+Status: core groups (E0/E1/E2) and extreme groups B1–B4/B6 measured end-to-end;
+B5 (unrelated views) inferred; LOO + random controls running. **Headline: adding
+neutral views does NOT interfere with the model's depth on the core views; the
+mesh damage from "more views" happens at the fusion stage (precision dilution).
+Extreme/grazing views are the exception — they DO interfere.**
 
 ## Motivation
 
@@ -62,18 +63,28 @@ all 32 — so "model change" (E0 vs E1 mesh, same 16 depths slots) and "fusion c
 
 ### Results (depth/normal on A's reference views, image space)
 
-| Run | abs-rel mean / median | normal° | flat° | edge° | RPE rot° |
+| Run | abs-rel mean | normal° | flat° | edge° | RPE rot° |
 |---|---:|---:|---:|---:|---:|
-| E0 (A only) | 1.242% / 0.701% | 32.16 | 15.61 | 33.86 | 0.442 |
-| E1 (A+B_core, A evaluated) | pending | | | | |
+| E0 (A only) | 1.242% | 32.16 | 15.61 | 33.86 | 0.380 |
+| E1 (A+B_core, A evaluated) | **1.220%** | 32.15 | 15.74 | 33.86 | 0.335 |
+
+E1 ≈ E0 (−0.02pp abs-rel): **no interference on the core views from 16 neutral extra
+views.** (GT source equivalence checked: re-running E0 against the ab GT instead of
+the gt16 GT changes abs-rel by 0.0003pp.)
 
 ### Results (mesh, frozen P0 grid)
 
-| Fusion | F@1vox | P/R@1vox | acc (vox) | compl (vox) | hole_fill | burr |
-|---|---:|---:|---:|---:|---:|---:|
-| F0 = E0 core16 | 0.6206 (baseline) | 0.554/0.705 | 1.403 | 0.809 | — | — |
-| F1 = E1 core16 | pending | | | | | |
-| F2 = E2 all32 | pending | | | | | |
+| Fusion | Depths fused | F@1vox | P / R @1vox | acc (vox) | compl (vox) | P_sharp | R_sharp | hole_fill | burr |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| F0 = E0 | core16 (A-only run) | **0.6212** | 0.555 / 0.705 | 1.398 | 0.809 | 0.327 | 0.721 | 0.985 | 0.019 |
+| F1 = E1 | core16 (A+B run) | 0.6123 | 0.565 / 0.668 | 1.380 | 0.821 | 0.322 | 0.610 | 0.985 | 0.020 |
+| F2 = E2 | all 32 | 0.5736 | 0.481 / 0.710 | 1.769 | 0.805 | 0.252 | 0.709 | 0.998 | 0.019 |
+
+Reading: F0→F1 isolates the model change (same 16 depth slots, predictions from
+different input sets) — small. F1→F2 isolates the fusion change (same model run,
+16 vs 32 depths fused) — **precision collapses 0.565→0.481** while recall is flat:
+the extra depth sheets thicken the surface. This reproduces the mechanism behind the
+old set16→set64 mesh degradation, now attributable to fusion, not attention.
 
 ## Extreme candidate groups (A + 16 typed views each)
 
@@ -95,7 +106,49 @@ foreign views (rejection signal).
 
 ### Results
 
-pending
+Image space (E1-style: error on A's 16 reference views; E0 = 1.242% / 32.16°):
+
+| Group | abs-rel | Δ vs E0 | normal° | RPE rot° |
+|---|---:|---:|---:|---:|
+| E1 (B_core neutral) | 1.220% | −0.02pp | 32.15 | 0.335 |
+| B1 near-duplicate | 1.236% | −0.01pp | 32.04 | 0.367 |
+| B2 low quality | 1.261% | +0.02pp | 32.09 | 0.354 |
+| B3 appearance proxy | 1.192% | −0.05pp | 31.92 | 0.353 |
+| B4 extreme | **1.395%** | **+0.15pp** | **32.71** | 0.332 |
+| B6 high value | **1.362%** | **+0.12pp** | 32.28 | 0.342 |
+| B5 unrelated | pending | | | |
+
+Mesh (c16 = fuse only A's depths from that run; full = fuse all 32):
+
+| Group | F@1vox c16 | F@1vox full | P/R full | acc full (vox) | P_sharp full |
+|---|---:|---:|---:|---:|---:|
+| E0 reference | 0.6212 | — | — | — | — |
+| B_core (E1/E2) | 0.6123 | 0.5736 | 0.481/0.710 | 1.769 | 0.252 |
+| B1 near-duplicate | **0.6419** | 0.5686 | 0.486/0.685 | 1.770 | 0.281 |
+| B2 low quality | 0.6021 | 0.5334 | 0.452/0.650 | 1.915 | 0.255 |
+| B3 appearance proxy | 0.6337 | 0.5630 | 0.483/0.676 | 1.802 | 0.284 |
+| B4 extreme | 0.6090 | **0.4521** | 0.406/0.509 | 1.838 | 0.237 |
+| B6 high value | 0.6022 | 0.5028 | 0.441/0.585 | 1.842 | 0.254 |
+
+Findings:
+
+1. **Attention interference is absent for ordinary views.** Near-duplicates, blurred/
+   noisy and tone-shifted views leave A's depth within ±0.05pp — the model is robust
+   to redundant or degraded context. B1's presence even *improves* the core-16 mesh
+   (0.6419 vs 0.6212): redundant support views act like a weak ensemble for the
+   covered viewpoints.
+2. **Extreme/grazing views are the exception.** B4 degrades A's own depth
+   (+0.15pp abs-rel, +0.55° normal) *and* its full fusion is catastrophic
+   (F 0.4521, recall also drops): the model both mis-predicts those views and lets
+   them distort the shared frame.
+3. **"High value" coverage views (B6) do not pay off.** A's depth worsens slightly
+   (+0.12pp) and the full mesh is worse than neutral B_core (0.5028 vs 0.5736) —
+   distant viewpoints add the most inconsistent depth sheets. Under the current
+   fusion rule, coverage is not convertible into accuracy.
+4. **Every 32-view fusion loses to the best 16-view fusion** (all full ≤ 0.569 vs
+   e0 0.6212), with precision collapsing across all groups — the harm is generic to
+   naive uniform TSDF averaging, not to any view type. View selection alone cannot
+   fix this; it must pair with a fusion rule that suppresses inconsistent sheets.
 
 ## Leave-one-out marginal contribution
 

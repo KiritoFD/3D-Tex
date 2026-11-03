@@ -333,7 +333,9 @@ def cmd_assemble(args):
     for f in records:
         stem = Path(f["frame"]).stem
         for sub in ("depth", "foreground"):
-            shutil.copyfile(gt_src / sub / f"{stem}.npy", gt_dst / sub / f"{stem}.npy")
+            src_f, dst_f = gt_src / sub / f"{stem}.npy", gt_dst / sub / f"{stem}.npy"
+            if src_f.resolve() != dst_f.resolve():
+                shutil.copyfile(src_f, dst_f)
     (gt_dst / "cameras.json").write_text(json.dumps({"camera_model": "PINHOLE", "frames": records},
                                                     indent=2) + "\n")
     if args.omega_src and Path(args.omega_src).is_dir():
