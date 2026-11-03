@@ -318,21 +318,52 @@ they respond), but the *edge_band / thin_sharp / high_curvature* family
 responds weakly to capture and is the natural target for a depth-side
 refiner (P1) or a better multi-view matcher (E2).
 
-## E2 status — COLMAP PatchMatch external baseline (in progress)
+## E2 — COLMAP PatchMatch external baseline
+
+**Status**: anchor16 done; set32 running.
+
+COLMAP path: Windows 4.2.1 CUDA binary crashes with 0xC0000409 the moment
+PatchMatch starts (same native-CUDA instability as Blender EEVEE/Cycles-GPU
+on this host; torch CUDA works). WSL source build of COLMAP 4.2.1 with
+CUDA 12.8 / sm_89 succeeds (build: `cmake -GNinja -DGUI_ENABLED=OFF
+-DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc -DCUDA_ENABLED=ON`; first
+build passed `--CUDAToolkit_ROOT` pointing at the Windows CUDA on /mnt/c
+which silently produced a CPU-only binary; the successful build points at
+WSL's /usr/local/cuda). PatchMatchStereo needs `depth_min`/`depth_max` when
+the sparse model has no 3D points (true for known-pose-only reconstruction);
+estimated from VGGT anchor16 depth percentiles: [2.5, 6.5] (camera frame).
+
+| Geometry | depth abs-rel mean / median / p90 | normal mean° | coverage_rate | hole_fill_rate | burr_rate |
+|---|---:|---:|---:|---:|---:|
+| VGGT-Ω (anchor16) | 1.242% / 0.701% / — | 32.16 | — | 0.990 | — |
+| **COLMAP PatchMatch (anchor16)** | 2.305% / 0.891% / 3.341% | 24.43 | 0.066 | 0.206 | 0.0153 |
+
+PatchMatch is roughly twice as bad on abs-rel as VGGT-Ω (2.3% vs 1.24%) and
+its depth is much sparser (coverage 6.6% vs ~100%, normal count 5.3k vs
+~50k pixels) — many pixels have no confident multi-view match. Where
+PatchMatch does commit, its surface normal is **markedly better** than VGGT-Ω
+(24.4° vs 32.2°; flat-region 8.3° vs 15.6°), confirming that classical
+multi-view matching does not suffer the patch-level smoothing bias seen in
+the network prior. The combined evidence (better normals where it commits,
+but much worse coverage / overall abs-rel) supports the **geometry-refinement
+route** (P1): use VGGT-Ω as a depth prior and refine with multi-view
+photometric consistency, rather than replacing it.
+
+## E2 status — COLMAP PatchMatch external baseline (anchor16 done; set32 in progress)
 
 - Windows COLMAP 4.2.1 CUDA binary (414 MB, verified `colmap -h`) crashes with
   STATUS_STACK_BUFFER_OVERRUN (0xC0000409) the moment PatchMatch starts on this
   host — same native-CUDA instability as Blender EEVEE/Cycles-GPU on this box
   (torch CUDA works). Retried at max_image_size 400: same crash. No CPU
   PatchMatch exists (COLMAP MVS is CUDA-only).
-- Fallback in progress: building COLMAP 4.2.1 from source inside WSL (CUDA
-  toolkit 13.4, sm_89). Dependency chain so far: OpenImageIO (+tools), CGAL,
-  OpenCV. Build is running.
-- The pipeline side is ready and tested up to the crash point: aligned-pose
-  export (`export_aligned_poses.py`, identical Sim(3) as the TSDF protocol),
-  COLMAP model writer + per-reference stereo cfg (`colmap_mvs.py`), .bin depth/
-  normal parser. Once a working colmap binary exists, E2 runs anchor16 + set32
-  through the frozen evaluation.
+- WSL source build of COLMAP 4.2.1 (CUDA 12.8, sm_89) succeeds after the
+  CUDAToolkit path was corrected from `/mnt/c/...` (Windows CUDA, silently
+  produced CPU-only binary) to `/usr/local/cuda`. anchor16 PatchMatch:
+  268 s on RTX 4070 laptop for 16 views at 800².
+- Pipeline: `scripts/capture/export_aligned_poses.py` (frozen Sim(3)) →
+  `colmap_mvs.py` (write PINHOLE model + per-reference stereo cfg + run +
+  .bin→npy) → `capture_eval.py --geometry-dir` (skips Sim3/regrid, resizes
+  800²→512² INTER_NEAREST onto the GT K grid).
 
 ## Blocked/pending axes
 

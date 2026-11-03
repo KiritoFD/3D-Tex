@@ -63,12 +63,15 @@ def write_model(sparse_dir, frames):
 
 
 def read_bin(path):
-    """COLMAP .bin map: ASCII 'width height channels' header then little-endian float32."""
+    """COLMAP .bin map: header is '<W>&<H>&<C>&' ASCII (10 bytes for 800x800x1)
+    then little-endian float32 of W*H*C."""
+    import re
     with open(path, "rb") as handle:
-        header = b""
-        while len(header.split()) < 3:
-            header += handle.read(1)
-        width, height, channels = map(int, header.split())
+        header = handle.read(32)
+        m = re.match(rb"(\d+)&(\d+)&(\d+)&", header)
+        width, height, channels = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        header_len = m.end()
+        handle.seek(header_len)
         data = np.frombuffer(handle.read(), dtype=np.float32)
     return data.reshape(height, width, channels)
 
@@ -163,7 +166,7 @@ def main():
         source = geometric if geometric.is_file() else photometric
         if not source.is_file():
             raise SystemExit(f"missing depth map for {stem}: {source}")
-        depth = read_bin(source)[..., 0]
+        depth = read_bin(source)[..., 0].copy()
         depth[~np.isfinite(depth)] = 0
         depth[depth < 0] = 0
         np.save(out / "depth" / f"{stem}.npy", depth.astype(np.float32))
