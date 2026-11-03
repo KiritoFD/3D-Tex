@@ -320,7 +320,7 @@ refiner (P1) or a better multi-view matcher (E2).
 
 ## E2 — COLMAP PatchMatch external baseline
 
-**Status**: anchor16 done; set32 running.
+**Status**: anchor16 and set32 done.
 
 COLMAP path: Windows 4.2.1 CUDA binary crashes with 0xC0000409 the moment
 PatchMatch starts (same native-CUDA instability as Blender EEVEE/Cycles-GPU
@@ -332,24 +332,42 @@ which silently produced a CPU-only binary; the successful build points at
 WSL's /usr/local/cuda). PatchMatchStereo needs `depth_min`/`depth_max` when
 the sparse model has no 3D points (true for known-pose-only reconstruction);
 estimated from VGGT anchor16 depth percentiles: [2.5, 6.5] (camera frame).
+anchor16: 268 s for 16 views; set32: 494 s for 32 views on the RTX 4070 laptop.
 
 | Geometry | depth abs-rel mean / median / p90 | normal mean° | coverage_rate | hole_fill_rate | burr_rate |
 |---|---:|---:|---:|---:|---:|
 | VGGT-Ω (anchor16) | 1.242% / 0.701% / — | 32.16 | — | 0.990 | — |
-| **COLMAP PatchMatch (anchor16)** | 2.305% / 0.891% / 3.341% | 24.43 | 0.066 | 0.206 | 0.0153 |
+| COLMAP PatchMatch (anchor16) | 2.305% / 0.891% / 3.341% | **24.43** | 0.066 | **0.206** | 0.0153 |
+| VGGT-Ω (set32) | 1.462% / 0.888% / — | 32.53 | — | 0.994 | — |
+| COLMAP PatchMatch (set32) | 2.698% / 1.098% / 3.420% | 32.63 | 0.264 | **0.611** | **0.0105** |
 
-PatchMatch is roughly twice as bad on abs-rel as VGGT-Ω (2.3% vs 1.24%) and
-its depth is much sparser (coverage 6.6% vs ~100%, normal count 5.3k vs
-~50k pixels) — many pixels have no confident multi-view match. Where
-PatchMatch does commit, its surface normal is **markedly better** than VGGT-Ω
-(24.4° vs 32.2°; flat-region 8.3° vs 15.6°), confirming that classical
-multi-view matching does not suffer the patch-level smoothing bias seen in
-the network prior. The combined evidence (better normals where it commits,
-but much worse coverage / overall abs-rel) supports the **geometry-refinement
-route** (P1): use VGGT-Ω as a depth prior and refine with multi-view
-photometric consistency, rather than replacing it.
+PatchMatch is roughly twice as bad on abs-rel as VGGT-Ω on the same views
+(anchor16: 2.31% vs 1.24%; set32: 2.70% vs 1.46%) and its depth is much
+sparser (anchor16 coverage 6.6%, set32 26.4%, vs ~100% for VGGT-Ω) — many
+pixels have no confident multi-view match.
 
-## E2 status — COLMAP PatchMatch external baseline (anchor16 done; set32 in progress)
+Where PatchMatch does commit on anchor16, its surface normal is markedly
+better than VGGT-Ω (24.4° vs 32.2°; flat-region 8.3° vs 15.6°) — on 16
+well-placed views, classical multi-view matching does not suffer the
+patch-level smoothing bias seen in the network prior. At 32 views the
+PatchMatch normal is no longer better than VGGT-Ω (32.6° vs 32.5°), suggesting
+the extra 16 views (denser azimuth, similar elevation) mostly add
+lower-confidence / noisier matches that erase the normal-angle advantage
+while the abs-rel penalty and sparse coverage persist.
+
+Crucially, **PatchMatch hole_fill_rate is far lower than VGGT-Ω** (anchor16
+0.21 vs 0.99; set32 0.61 vs 0.99): PatchMatch does NOT bridge window holes
+or melt lattice openings the way the network prior does, confirming the
+visual review's "fluffy bridging" as a network-specific failure. Its
+burr_rate is also lower (anchor16 0.015 vs ~0.024 typical; set32 0.010 vs
+0.027 for dualring).
+
+Combined evidence (PatchMatch: better normals / structure preservation where
+it commits, much worse coverage / abs-rel overall) supports the **geometry
+refinement route** (P1): use VGGT-Ω as a depth prior and refine with
+multi-view photometric consistency, rather than replacing it.
+
+## E2 status — COLMAP PatchMatch external baseline (anchor16 + set32 done)
 
 - Windows COLMAP 4.2.1 CUDA binary (414 MB, verified `colmap -h`) crashes with
   STATUS_STACK_BUFFER_OVERRUN (0xC0000409) the moment PatchMatch starts on this
@@ -359,7 +377,7 @@ photometric consistency, rather than replacing it.
 - WSL source build of COLMAP 4.2.1 (CUDA 12.8, sm_89) succeeds after the
   CUDAToolkit path was corrected from `/mnt/c/...` (Windows CUDA, silently
   produced CPU-only binary) to `/usr/local/cuda`. anchor16 PatchMatch:
-  268 s on RTX 4070 laptop for 16 views at 800².
+  268 s on RTX 4070 laptop for 16 views at 800²; set32: 494 s for 32 views.
 - Pipeline: `scripts/capture/export_aligned_poses.py` (frozen Sim(3)) →
   `colmap_mvs.py` (write PINHOLE model + per-reference stereo cfg + run +
   .bin→npy) → `capture_eval.py --geometry-dir` (skips Sim3/regrid, resizes
