@@ -353,18 +353,39 @@ def cmd_assemble(args):
 
 # ----------------------------------------------------------------------------- infer
 
-def wait_for_vram(min_free_gib, timeout_s, poll_s=30.0):
+def host_commit_free_gib():
+    """Free commit charge (GiB): the streaming checkpoint load dies with an access
+    violation when the page file is exhausted, so gate on commit, not just VRAM."""
+    import ctypes
+    perf = type("PERF", (ctypes.Structure,),
+                {"_fields_": [("cb", ctypes.c_ulong),
+                              ("CommitTotal", ctypes.c_size_t), ("CommitLimit", ctypes.c_size_t),
+                              ("CommitPeak", ctypes.c_size_t), ("PhysicalTotal", ctypes.c_size_t),
+                              ("PhysicalAvailable", ctypes.c_size_t), ("SystemCache", ctypes.c_size_t),
+                              ("KernelTotal", ctypes.c_size_t), ("KernelPaged", ctypes.c_size_t),
+                              ("KernelNonpaged", ctypes.c_size_t), ("PageSize", ctypes.c_size_t),
+                              ("HandleCount", ctypes.c_ulong), ("ProcessCount", ctypes.c_ulong),
+                              ("ThreadCount", ctypes.c_ulong)]})()
+    perf.cb = ctypes.sizeof(perf)
+    ctypes.windll.psapi.GetPerformanceInfo(ctypes.byref(perf), perf.cb)
+    return (perf.CommitLimit - perf.CommitTotal) * perf.PageSize / 2**30
+
+
+def wait_for_vram(min_free_gib, timeout_s, poll_s=30.0, min_commit_gib=8.0):
     import torch
     deadline = time.time() + timeout_s
     while True:
         free, total = torch.cuda.mem_get_info()
-        if free >= min_free_gib * 2**30:
-            print(f"[gpu] free {free / 2**30:.2f}/{total / 2**30:.2f} GiB -> proceed", flush=True)
+        commit_free = host_commit_free_gib()
+        if free >= min_free_gib * 2**30 and commit_free >= min_commit_gib:
+            print(f"[gpu] free {free / 2**30:.2f}/{total / 2**30:.2f} GiB | "
+                  f"commit free {commit_free:.1f} GiB -> proceed", flush=True)
             return
         if time.time() > deadline:
-            raise SystemExit(f"[gpu] only {free / 2**30:.2f} GiB free after waiting "
-                             f"{timeout_s:.0f}s (need {min_free_gib}); aborting")
-        print(f"[gpu] free {free / 2**30:.2f} GiB < {min_free_gib} GiB; waiting {poll_s:.0f}s ...",
+            raise SystemExit(f"[gpu] vram {free / 2**30:.2f} GiB / commit {commit_free:.1f} GiB "
+                             f"still short after {timeout_s:.0f}s; aborting")
+        print(f"[gpu] vram {free / 2**30:.2f} GiB (need {min_free_gib}), commit "
+              f"{commit_free:.1f} GiB (need {min_commit_gib}); waiting {poll_s:.0f}s ...",
               flush=True)
         time.sleep(poll_s)
 
@@ -536,17 +557,17 @@ def eval_geometry(omega_dir, gt_dir, only_stems=None):
         flat_all.append(angle[gt_flat_mask(gn, gv) & nv]); edge_all.append(angle[gt_edge_mask(reference) & nv])
 
     # RPE over all unordered pairs (aligned prediction vs GT, source gauge).
-    def rel_pose(t_a, t_b):
-        return np.linalg.inv(t_a) @ t_b
+    # Relative motion a->b in w2c convention: M = T_b @ inv(T_a); RPE = M_gt^-1 M_pred.
     rot_err, trans_ang, trans_len = [], [], []
     n = len(records)
     for i in range(n):
         for j in range(i + 1, n):
-            rg = rel_pose(gts[i], gts[j]); rp = rel_pose(aligned[i], aligned[j])
-            rd = rg[:3, :3].T @ rp[:3, :3]
+            mg = gts[j] @ np.linalg.inv(gts[i])
+            mp = aligned[j] @ np.linalg.inv(aligned[i])
+            rd = mg[:3, :3].T @ mp[:3, :3]
             cos = np.clip((np.trace(rd) - 1) / 2, -1, 1)
             rot_err.append(np.degrees(np.arccos(cos)))
-            tg, tp = rg[:3, 3], rp[:3, 3]
+            tg, tp = mg[:3, 3], mp[:3, 3]
             ng, np_ = np.linalg.norm(tg), np.linalg.norm(tp)
             if ng > 1e-9 and np_ > 1e-9:
                 trans_ang.append(np.degrees(np.arccos(np.clip(tg @ tp / (ng * np_), -1, 1))))
@@ -614,10 +635,15 @@ def cmd_score(args):
         img_path = run_dir / "images" / f"{stem}{Path(frames[i]['frame']).suffix}"
         with Image.open(img_path) as im:
             rgba = np.asarray(im.convert("RGBA"))
-        comp = (rgba[..., :3].astype(np.float32) * (rgba[..., 3:4] / 255.0)
-                + 255 * (1 - rgba[..., 3:4] / 255.0))
+        # Quality stats are restricted to the photographed object when an alpha mask
+        # exists (the lego renders are transparent-bg; compositing on white would make
+        # "overexposure" measure the background, not the image content).
+        has_alpha = rgba.shape[-1] == 4 and (rgba[..., 3] < 250).any()
+        fg = rgba[..., 3] > 127 if has_alpha else np.ones(rgba.shape[:2], bool)
+        comp = rgba[..., :3].astype(np.float32)
         gray = cv2.cvtColor(comp.astype(np.uint8), cv2.COLOR_RGB2GRAY)
         lum = comp.mean(axis=-1) / 255.0
+        lap = cv2.Laplacian(gray, cv2.CV_64F)
         reproj = []
         d = depths[i][::step, ::step]
         k = np.asarray(frames[i]["K_model"])
@@ -640,10 +666,10 @@ def cmd_score(args):
                              np.clip(np.rint(uf[inside]).astype(int), 0, width - 1)]
             reproj.append(float((np.abs(z[inside] - zref) <= 0.05 * z[inside]).mean()))
         scores[stem] = {
-            "laplacian_var": float(cv2.Laplacian(gray, cv2.CV_64F).var()),
-            "exposure_over_frac": float((lum > 250 / 255).mean()),
-            "exposure_under_frac": float((lum < 5 / 255).mean()),
-            "mean_luminance": float(lum.mean()),
+            "laplacian_var": float(lap[fg].var()),
+            "exposure_over_frac": float((lum[fg] > 250 / 255).mean()),
+            "exposure_under_frac": float((lum[fg] < 5 / 255).mean()),
+            "mean_luminance": float(lum[fg].mean()),
             "conf_mean": float(confs[i].mean()), "conf_p10": float(np.percentile(confs[i], 10)),
             "min_angular_deg_pred": float(ang[i].min()),
             "min_baseline_rel": float(baseline[i].min() / np.median(baseline[np.isfinite(baseline)])),
@@ -661,12 +687,13 @@ def cmd_score(args):
 def cmd_loo(args):
     """Leave-one-out over the views of one base run dir.
 
-    Phase run:     infer S (if missing), then for every stem infer S\\{i} and eval on
-                   the retained 31 views. Sequential; resume-safe; VRAM-gated.
-    Phase tabulate: read all per-run eval JSONs, build the Delta table, run the
-                   equal-count random-deletion control from the SAME evals (the 31
-                   single deletions are the exhaustive k=1 distribution), and rank-
-                   correlate deployable scores with the GT marginal contribution.
+    Phase run:      infer S (if missing), then for every stem infer S\\{i} and eval on
+                    the retained 31 views. Sequential; resume-safe; VRAM-gated.
+    Phase joint:    drop a flagged set H at once, plus --draws seeded random sets of the
+                    SAME size (equal-count random control for joint deletion). Each run
+                    is evaluated on the retained core (anchor) views.
+    Phase tabulate: read all per-run eval JSONs, build the Delta table, and rank-
+                    correlate deployable scores with the GT marginal contribution.
     """
     base = Path(args.base)
     gt = Path(args.gt)
@@ -692,6 +719,54 @@ def cmd_loo(args):
             eval_out.write_text(json.dumps(result, indent=2) + "\n")
             print(f"[loo] {s}: abs_rel {result['aggregate']['abs_rel']['mean']:.5f} "
                   f"normal {result['aggregate']['normal_deg']['mean']:.3f}", flush=True)
+        return
+
+    if args.phase == "joint":
+        # H from --joint-h (comma stems); random controls: --draws seeded sets of |H|.
+        harmful = [s for s in args.joint_h.split(",") if s]
+        anchor = [s for s in (args.anchor_stems.split(",") if args.anchor_stems else [])]
+        rng = np.random.default_rng(args.seed)
+        sets = {"drop_flagged": harmful}
+        for k in range(args.draws):
+            sets[f"drop_random_{k}"] = sorted(rng.choice(stems, size=len(harmful),
+                                                         replace=False).tolist())
+        full = eval_geometry(base / "geometry" / "omega", gt, stems)
+        full_view = {r["stem"]: r for r in full["per_view"]}
+        rows = []
+        for name, drop in sets.items():
+            tag = "_".join(sorted(drop))[:60]
+            out = work / f"joint_{name}" / "omega"
+            if not (work / f"joint_{name}.json").is_file():
+                cmd = [sys.executable, str(Path(__file__).resolve()), "infer",
+                       "--run-dir", str(base), "--out", str(out),
+                       "--checkpoint", str(args.checkpoint), "--exclude", ",".join(drop),
+                       "--min-free-gib", str(args.min_free_gib),
+                       "--wait-seconds", str(args.wait_seconds)]
+                print(f"[loo-joint] --- {name}: drop {drop} ---", flush=True)
+                subprocess.run(cmd, check=True)
+                retained = [x for x in stems if x not in set(drop)]
+                result = eval_geometry(out, gt, retained)
+                (work / f"joint_{name}.json").write_text(json.dumps(result, indent=2) + "\n")
+            result = json.loads((work / f"joint_{name}.json").read_text())
+            retained = [x for x in stems if x not in set(drop)]
+            ref = [x for x in retained if x in set(anchor)] or retained
+            minus_view = {r["stem"]: r for r in result["per_view"]}
+            rows.append({"set": name, "dropped": drop, "reference": "retained_core",
+                         "n_ref": len(ref),
+                         "delta_abs_rel": float(np.mean([full_view[x]["abs_rel"] for x in ref])
+                                                - np.mean([minus_view[x]["abs_rel"] for x in ref])),
+                         "delta_normal_deg": float(np.mean([full_view[x]["normal_deg"] for x in ref])
+                                                   - np.mean([minus_view[x]["normal_deg"]
+                                                              for x in ref]))})
+        flagged = [r for r in rows if r["set"] == "drop_flagged"][0]
+        randoms = [r for r in rows if r["set"].startswith("drop_random")]
+        report = {"flagged": flagged, "random_controls": randoms,
+                  "random_delta_mean": float(np.mean([r["delta_abs_rel"] for r in randoms])),
+                  "random_delta_std": float(np.std([r["delta_abs_rel"] for r in randoms])),
+                  "note": "Delta = E(S) - E(S\\set) on retained core views; Delta > 0 = removed "
+                          "views were net negative contributors"}
+        (work / "joint_report.json").write_text(json.dumps(report, indent=2) + "\n")
+        print(json.dumps(report, indent=2))
         return
 
     # tabulate
@@ -763,15 +838,32 @@ def cmd_viz(args):
     out.mkdir(parents=True, exist_ok=True)
     gt = Path(args.gt)
     stems = args.stems.split(",")
+    omegas = [Path(p) for p in args.omegas.split(",")]
+    gt_records = json.loads((gt / "cameras.json").read_text())["frames"]
+    # Protocol scale per omega dir: train-only Sim(3) over ALL GT frames (same rule
+    # as capture_eval/eval), so depth panels share the GT gauge.
+    scales = []
+    for omega in omegas:
+        preds = {f["frame"]: f for f in json.loads((omega / "cameras.json").read_text())["frames"]}
+        gts = np.asarray([f["T_world_to_cam"] for f in gt_records])
+        pts = np.asarray([preds[f["frame"]]["T_world_to_cam"] for f in gt_records])
+        gc = -np.einsum("sji,sj->si", gts[:, :3, :3], gts[:, :3, 3])
+        pc = -np.einsum("sji,sj->si", pts[:, :3, :3], pts[:, :3, 3])
+        scale, _, _ = umeyama(pc, gc)
+        scales.append(scale)
+    print(f"[viz] sim3 scales: {[round(s, 4) for s in scales]}")
     rows_png = []
     for stem in stems:
         reference = np.load(gt / "depth" / f"{stem}.npy")
         foreground = np.load(gt / "foreground" / f"{stem}.npy")
-        imgs = [np.asarray(Image.open(Path(p) / "images" / f"{stem}.png").convert("RGBA"))
+        imgs = [np.asarray(Image.open(Path(p) / f"{stem}.png").convert("RGBA"))
                 for p in args.image_dirs.split(",")]
         rgba = imgs[0]
         comp = (rgba[..., :3].astype(np.float32) * (rgba[..., 3:4] / 255.0)
                 + 255 * (1 - rgba[..., 3:4] / 255.0)).astype(np.uint8)
+        if comp.shape[:2] != reference.shape:
+            comp = cv2.resize(comp, (reference.shape[1], reference.shape[0]),
+                              interpolation=cv2.INTER_AREA)
         lo = reference[foreground].min() if foreground.any() else 0
         hi = reference[foreground].max() if foreground.any() else 1
 
@@ -782,8 +874,8 @@ def cmd_viz(args):
             return cv2.cvtColor(vis, cv2.COLOR_BGR2RGB)
 
         tiles = [comp, depth_panel(reference)]
-        for omega in args.omegas.split(","):
-            d = np.load(Path(omega) / "depth" / f"{stem}.npy").squeeze()
+        for omega, scale in zip(omegas, scales):
+            d = np.load(omega / "depth" / f"{stem}.npy").squeeze() * scale
             if d.shape != reference.shape:
                 d = cv2.resize(d.astype(np.float32), (reference.shape[1], reference.shape[0]),
                                interpolation=cv2.INTER_NEAREST)
@@ -863,7 +955,9 @@ def main():
     p.add_argument("--base", required=True, help="run dir with the full 32-view omega export")
     p.add_argument("--gt", required=True, help="GT dir covering all base views")
     p.add_argument("--work", required=True)
-    p.add_argument("--phase", choices=["run", "tabulate"], required=True)
+    p.add_argument("--phase", choices=["run", "joint", "tabulate"], required=True)
+    p.add_argument("--joint-h", default=None, help="comma stems flagged for joint deletion")
+    p.add_argument("--draws", type=int, default=6, help="random equal-count control draws")
     p.add_argument("--checkpoint", default=str(CHECKPOINT))
     p.add_argument("--anchor-stems", default=None, help="comma-separated core-view stems")
     p.add_argument("--scores", default=None, help="score JSON for the Spearman analysis")
@@ -875,7 +969,7 @@ def main():
     p = sub.add_parser("viz")
     p.add_argument("--gt", required=True)
     p.add_argument("--omegas", required=True, help="comma-separated omega dirs (compared)")
-    p.add_argument("--image-dirs", required=True, help="comma-separated image dirs (first is shown)")
+    p.add_argument("--image-dirs", required=True, help="comma-separated dirs holding <stem>.png (first is shown)")
     p.add_argument("--stems", required=True)
     p.add_argument("--out", required=True)
     p.add_argument("--name", default="panel.png")
