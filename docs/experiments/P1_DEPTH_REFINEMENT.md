@@ -167,3 +167,165 @@ Diagnostics (scripts and outputs under `outputs/p1_refine/`, gitignored):
 per-pixel correlation), `diag_sweep.py` (plane-sweep argmin skill).
 Refine logs: `outputs/p1_refine/run*/refine_log.json`; eval reports:
 `outputs/p1_refine/eval_*/ablation_report.json` + `surface_metrics.json`.
+
+---
+
+# Follow-up A (2026-11-03): geometric-consistency gate sweep + sparse gated fusion
+
+Question (updated acceptance criteria): relax COLMAP's `geom_consistency`
+filter step by step, find the coverage-vs-accuracy knee, then fuse sparsely —
+replace VGGT depth with COLMAP depth ONLY on gate-passing pixels (VGGT kept
+everywhere else) — and test whether a small number of trusted corrections
+improves accuracy without degrading completeness, silhouette or structure.
+Precision/recall are reported separately; selection is by geometric metrics
+only (no ZNCC/PSNR/loss-based early stopping anywhere in this section).
+
+## A.1 Gate threshold sweep (anchor16, COLMAP 4.2.1 CUDA, WSL build)
+
+Swept `filter_geom_consistency_max_cost` × `filter_min_num_consistent`
+(full PatchMatch re-run per level, ~5 min each; bins: `outputs/colmap/sweep/`).
+COLMAP-only metrics through the frozen protocol (`capture_eval --geometry-dir`):
+
+| Level | valid px % | abs_rel mean/med | normal° | flat° | hole_fill | coverage_rate |
+|---|---:|---:|---:|---:|---:|---:|
+| cost1_nc2 (E2 default) | 2.54 | 2.36% / 0.89% | 24.43 | 8.3 | 0.206 | 0.066 |
+| cost2_nc2 | 3.72 | **2.34%** / 0.91% | 29.25 | 11.83 | 0.298 | 0.090 |
+| cost3_nc2 | 14.84 | 10.75% / 1.60% | 43.22 | 30.07 | 0.778 | 0.155 |
+| cost4_nc2 | 14.84 | = cost3 (identical maps) | — | — | — | — |
+| cost8_nc2 | 14.84 | = cost3 (identical maps) | — | — | — | — |
+| cost1_nc1 | 14.08 | 12.57% / 1.70% | 36.98 | 16.54 | 0.788 | 0.126 |
+| cost4_nc1 | 30.98 | 19.37% / 4.09% | 50.40 | 43.90 | 0.970 | 0.111 |
+
+**Knee: `cost2_nc2`.** Coverage rises 2.5%→3.7% at unchanged accuracy
+(2.34%); at cost3 the gate collapses outright (14.8% coverage but 10.8%
+error), and cost4/cost8 produce byte-identical maps (threshold saturates).
+Dropping `min_num_consistent` to 1 behaves like the cost relaxation (14–31%
+coverage, 12.6–19.4% error). Answer to "放宽到多少覆盖率时精度还显著优于
+VGGT": **on abs_rel, never** (COLMAP ≥2.34% vs VGGT 1.24% everywhere); **on
+normals, only up to ~3.7% coverage** (24.4° at cost1, 29.3° at cost2, both
+better than VGGT's 32.16°; gone by cost3). The trustworthy gate is intrinsically
+sparse at 16 views.
+
+## A.2 Sparse gated fusion (gate% = replaced pred-grid pixel fraction; hard replace unless noted)
+
+Fused depth (`scripts/gated_fusion.py`: z-buffer splat into the predicted gauge
+via the frozen train-only Sim3, verified bit-consistent with the E2 aligned
+poses) through the IDENTICAL default protocol as the 0.6207 baseline:
+
+| Level | gate% | F@1vox | P / R @1vox | acc (vox) | compl (vox) | abs_rel | normal° (flat) | burr | hole_fill | P_sharp / R_sharp |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| baseline | 0 | **0.6207** | 0.554 / 0.705 | 1.403 | 0.809 | **1.24%** | **32.16 (15.61)** | **0.0188** | 0.985 | **0.326** / 0.721 |
+| cost1_nc2 | 3.3 | 0.6211 | 0.553 / 0.708 | **1.393** | 0.806 | 1.39% | 34.54 (19.56) | 0.0210 | 0.984 | 0.321 / 0.717 |
+| cost2_nc2 | 4.4 | 0.6187 | 0.552 / 0.703 | 1.402 | **0.812** | 1.45% | 35.10 (20.17) | 0.0230 | 0.984 | 0.326 / 0.714 |
+| cost1_nc2, min-cluster 25 | 2.7 | 0.6198 | 0.553 / 0.705 | 1.394 | 0.810 | 1.33% | 33.62 (18.00) | 0.0201 | 0.983 | 0.318 / 0.711 |
+| cost2_nc2, min-cluster 25 | 3.8 | 0.6175 | 0.552 / 0.701 | 1.396 | 0.816 | 1.38% | 34.14 (18.64) | 0.0215 | 0.982 | 0.313 / 0.710 |
+| cost4_nc2 | 15.9 | 0.5898 | 0.520 / 0.681 | 1.600 | 0.839 | 5.79% | 44.33 (36.32) | 0.0314 | 0.988 | 0.287 / 0.702 |
+| cost4_nc2, feather 2px | 20.4 | 0.5828 | 0.512 / 0.677 | 1.669 | 0.843 | 6.69% | 46.25 (39.78) | 0.0309 | 0.986 | 0.276 / 0.696 |
+| cost1_nc1 | 16.6 | 0.5847 | 0.508 / 0.689 | 1.791 | 0.823 | 7.12% | 47.11 (37.91) | 0.0307 | 0.988 | 0.272 / 0.708 |
+| cost4_nc1 | 31.5 | 0.4815 | 0.408 / 0.588 | 2.919 | 1.037 | 16.52% | 52.69 (49.59) | 0.0422 | 0.981 | 0.193 / 0.581 |
+
+**Verdict: sparse gated fusion is exactly neutral where COLMAP is trustworthy
+(gate ≤4.4% of pixels: F within ±0.002 of baseline, accuracy −0.01 vox,
+completeness and structure unchanged), and monotonically harmful past the
+knee.** No tested operating point improves any metric while keeping the
+others: the "accuracy up, completeness down" trade-off does not materialise
+because at the trustworthy gate levels there is no measurable effect at all —
+3–4% of pixels is too few to move the TSDF surface. Cluster filtering
+(min-cluster 25) removes the isolated-splat noise (normals 34.5°→33.6°) but
+stays neutral. Feathering only spreads the damage at loose levels.
+
+Why the E2 advantage does not transfer: the committed-pixel advantage was
+*normal/accuracy of an isolated sparse surface*, not lower depth error
+(COLMAP abs_rel 2.34% > VGGT 1.24% at every level). Replacing 3% of pixels in
+a dense, view-consistent field injects (a) slightly higher-error values and
+(b) spike discontinuities at gate boundaries, while the region-coherent
+advantage PatchMatch has cannot express itself at 3% coverage.
+
+## A.3 Held-out views (4 predeclared test cameras, clay renders + silhouette IoU)
+
+Renders: `outputs/gated_fusion/renders/{baseline,cost1_nc2_b0,cost2_nc2_b0,cost4_nc2_b0}/view_0..3.png`
+(same WORKBENCH clay path as P0.5; IoU via `heldout_views.py compare`):
+
+| Case | silhouette IoU (4 heldout views) |
+|---|---:|
+| baseline | 0.9377 |
+| cost1_nc2 | 0.9364 |
+| cost2_nc2 | 0.9365 |
+| cost4_nc2 | **0.9110** |
+
+Visual review (image-by-image): baseline and cost1/cost2 are indistinguishable
+at full-frame level — same dune field, same melted posts, same stud loss, no
+new texture or crispness; structure survival is inherited unchanged (studs NOT
+recovered as an array, posts/spokes still melted, window holes still bridged —
+the gate has no signal there either). cost4 shows body-wide spike debris and a
+thickened silhouette fringe, matching its IoU/F drop. "更光滑" does not occur
+at any level; the strict-gate variants are simply the baseline with 3% of
+pixels nudged.
+
+## A.4 Conclusions for the record
+
+1. The COLMAP geometric-consistency gate is all-or-nothing on this data: knee
+   at cost2_nc2 (3.7% coverage @ 2.34%), collapse at cost3 (14.8% @ 10.8%).
+   There is no middle operating point with meaningfully more trustworthy
+   coverage.
+2. Sparse gated fusion cannot answer "用少量可信修正提升精度" affirmatively
+   at 16 views: trustworthy corrections are too sparse to matter (neutral),
+   and denser corrections are not trustworthy (harmful). The full trade-off
+   table above is the working-point record.
+3. This closes the photometric direction on the depth-value level on this
+   scene (P1 dense refinement negative; sparse gated replacement neutral).
+   Remaining routes are representation-side (see GEOMETRY_OPTIMIZATION.md
+   sections B and C) and capture-side.
+
+---
+
+# Follow-up B (2026-11-03): cross-scene — is the P1 failure a glossy-plastic special case?
+
+Method: the **held-out-source generalisation test** (GT-free, calibrated on
+lego). The run3 refinement recipe is re-run per scene with 4 randomly chosen
+views excluded from being photometric SOURCE views (`--holdout 4`); afterwards
+we measure the mean per-channel 5×5 ZNCC against train sources and against the
+held-out sources, at the initial and refined depth
+(`outputs/p1_refine/diag_generalization.py`). If the photometric gain were
+geometrically real it must transfer to unseen sources; adversarial gains do
+not. Calibration: on lego the same recipe is independently known from GT to be
+harmful (F 0.598 vs 0.621 baseline), and its transfer ratio is 0.28 — so any
+scene scoring ≤ that band is judged "not applicable", and a scene would need a
+clearly higher ratio to be a candidate.
+
+| Scene | Surface / imagery | pred ZNCC (train src) | GT ceiling | train gain | held-out gain | transfer ratio | Verdict |
+|---|---|---:|---:|---:|---:|---:|---|
+| lego (anchor16) | glossy plastic, path-traced | 0.564 | 0.645 per-channel (0.26 grayscale) | +0.033 | +0.009 | 0.28 | ✗ (calibration: F 0.598 < 0.621, harmful) |
+| eth3d pipes (12v) | industrial metal pipes, real DSLR | 0.308 | n/a (no dense GT in repo) | +0.012 | −0.000 | −0.01 | ✗ |
+| eth3d kicker (12v) | mixed glossy/wood foosball, real DSLR | 0.425 | n/a | +0.033 | −0.004 | −0.11 | ✗ |
+| eth3d relief (25v) | matte carved stone, strong texture, real DSLR | 0.782 | n/a | +0.014 | +0.003 | 0.24 | ✗ |
+
+(abs_rel / normal° / F-score per scene are reported where dense GT exists —
+lego only; ETH3D scenes carry laser-scan GT but no dense depth/mesh in this
+repo, marked n/a rather than approximated. The generalisation test is the
+decisive evidence and needs no GT.)
+
+Findings:
+
+1. **The failure is NOT a glossy-plastic special case.** On real photographs
+   across metallic (pipes), mixed-material (kicker) and matte strongly-textured
+   (relief) surfaces, the refinement's ZNCC gain does not transfer to unseen
+   source views either (ratios −0.11 to +0.24, all at or below the
+   calibrated-harmful lego band).
+2. **Base photo-consistency varies 2.5× by surface** (pred-gauge ZNCC: pipes
+   0.31, kicker 0.43, lego 0.56, relief 0.78): matte textured stone is far more
+   multi-view consistent than glossy plastic — texture/BRDF genuinely control
+   how much photometric signal exists. BUT even at relief's 0.78 the residual
+   gains available to an optimizer are adversarial: the easy consistency is
+   already correct, and the remaining slack is specular/aliasing/noise, same
+   mechanism as lego diagnostics 2–3.
+3. Texture is therefore **necessary but not sufficient** for photometric
+   geometry: it raises the consistency ceiling, but dense refinement still
+   finds no transferable signal on any tested scene. On this evidence the
+   photometric route is closed generally, not just for glossy synthetic
+   objects; representation-side routes (GEOMETRY_OPTIMIZATION.md B/C) are the
+   way forward.
+
+Runs: `outputs/xscene/{lego,pipes,kicker,relief}/refine_log.json`
+(refinement run3-recipe + holdout 4; lego 439 s, pipes 314 s, kicker 260 s,
+relief 356 s on the shared 8 GiB GPU).

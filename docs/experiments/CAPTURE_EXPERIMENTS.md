@@ -435,20 +435,21 @@ re-render at new resolutions) — EEVEE access-violates and Cycles-GPU init
 crashes on this host, so these remain **[未验证]** in CAPTURE_GUIDELINES.
 
 Next steps, in priority order:
-1. ~~P1 depth refinement~~ — **done, negative result** (P1_DEPTH_REFINEMENT.md):
-   dense photometric refinement degrades every metric (best F 0.598 vs 0.621
-   baseline); mechanism = glossy weak-texture appearance makes dense ZNCC
-   nearly geometry-free (GT ceiling 0.26 grayscale), photo gain anti-correlates
-   with depth gain, and a plane-sweep argmin has no skill. The only photometric
-   direction still consistent with the E2 evidence is a PatchMatch-style
-   winner-take-all search with geometric-consistency gating, updating only
-   strongly confirmed pixels against the VGGT prior.
-2. Done: per-region measure_surfaces runs for the res256/400/512 outputs
-   (mesh F 0.5726/0.6299/0.5954 vs anchor16 0.6206; non-monotone → noise).
-3. Done: measure_surfaces for the E2 colmap outputs (anchor16 F 0.1479, set32
-   F 0.4015; set32 accuracy 0.882 vox where committed). Coverage 0.066
-   attributed: photometric maps 100% valid, the geom_consistency filter keeps
-   only 2.5%/5.7% of pixels — filtering artefact, not matching failure.
+1. ~~P1 depth refinement~~ — **done, negative result** (P1_DEPTH_REFINEMENT.md).
+2. ~~E2-followup: gate sweep + sparse gated fusion~~ — **done, neutral**
+   (P1_DEPTH_REFINEMENT.md Follow-up A): knee at cost2_nc2; trustworthy gates
+   too sparse to matter, denser gates not trustworthy.
+3. ~~Cross-scene photometric validity~~ — **done** (Follow-up B): failure is
+   not a glossy-plastic special case; no tested scene (pipes/kicker/relief,
+   incl. matte textured stone at ZNCC 0.78) shows transferable photometric
+   gains.
+4. Next main line: Phase B Mesh Splatting with geometric anchors — plan and
+   feasibility probe in GEOMETRY_OPTIMIZATION.md (**no public code found**;
+   re-check before starting). Phase C (ADELE-style residual SDF) is a
+   research plan only.
+
+Done earlier: per-region measure_surfaces for res256/400/512 and E2 colmap
+outputs; coverage 0.066 attributed to the geom_consistency filter.
 
 ## Blocked/pending axes
 

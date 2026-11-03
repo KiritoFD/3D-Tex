@@ -71,6 +71,7 @@ weak-texture); geometry-side refinement must fix the edge/curvature family.
 | Focus / motion blur | must be sharp; blur robustness untested | **[未验证]** |
 | Exposure / highlights | avoid clipping (dataset-style studio lighting used in all experiments) | **[经验推断]** |
 | Lighting direction / shadows | single fixed soft key light used in the dataset; direction ablation untested | **[未验证]** |
+| Surface texture / specularity (for photometric geometry methods) | multi-view photo-consistency varies 2.5× with surface: pred-gauge per-channel ZNCC pipes 0.31 / kicker 0.43 / lego glossy plastic 0.56 / matte carved stone (relief) 0.78. Resolvable texture + matte finish raises the ceiling for any photometric method (cross-polarisation or diffuse lighting to suppress specular highlights is the capture-side lever). BUT on all four tested scenes the residual gains an optimizer can extract do NOT generalise to unseen views (held-out transfer −0.11…+0.24) — texture is necessary, not sufficient; dense photometric refinement is ruled out regardless of surface | **[实测支持]** P1 follow-up B (4 scenes, held-out generalisation test) |
 | Noise | dataset images are clean path traces; noise robustness untested | **[未验证]** |
 | Object size in frame | object spans ≳60% of frame height in all tested configs | **[实测支持]** at this framing only |
 
