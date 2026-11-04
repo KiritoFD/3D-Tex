@@ -23,16 +23,22 @@ def load_views(args, device):
     poses = np.asarray([f["T_world_to_cam"] for f in frames])
     scale, rotation, translation = 1., np.eye(3), np.zeros(3)
     gt = None
+    calibration_record = None
+    if getattr(args, "calibration", None):
+        if args.camera_mode != "diagnostic":
+            raise ValueError("non-ideal calibration requires the diagnostic rig; modes are never mixed")
+        calibration_record = json.loads(Path(args.calibration).read_text())
+        if calibration_record["mode"] != "non_ideal" or calibration_record["registration"] != "locked":
+            raise ValueError(f"unsupported calibration record: {calibration_record['mode']}/{calibration_record['registration']}")
     if args.camera_mode == "diagnostic":
-        from verify_scene import umeyama
+        from measurement_error.calibration import align_poses
         gt = {Path(f["frame"]).stem: f for f in json.loads(
             (Path(args.gt) / "cameras.json").read_text())["frames"]}
         gts = np.asarray([gt[Path(f["frame"]).stem]["T_world_to_cam"] for f in frames])
-        pc = -np.einsum("sji,sj->si", poses[:, :3, :3], poses[:, :3, 3])
-        gc = -np.einsum("sji,sj->si", gts[:, :3, :3], gts[:, :3, 3])
-        scale, rotation, translation = umeyama(pc, gc)
-        poses[:, :3, :3] = poses[:, :3, :3] @ rotation.T
-        poses[:, :3, 3] = scale * poses[:, :3, 3] - poses[:, :3, :3] @ translation
+        # One ideal Sim(3) fixes the world gauge. Injected calibration error is added
+        # afterwards in that gauge and is never re-fitted against the GT cameras.
+        poses, registration = align_poses(poses, gts)
+        scale, rotation, translation = registration["scale"], np.asarray(registration["rotation"]), np.asarray(registration["translation"])
     elif args.mask_dir is None and args.images is None:
         raise ValueError("prediction mode requires --mask-dir or RGBA --images; no GT fallback")
     views = []
@@ -42,6 +48,10 @@ def load_views(args, device):
         k = np.asarray(gt[stem]["K_model"] if gt else pk).copy()
         width = gt[stem].get("model_width", 512) if gt else frame["model_width"]
         height = gt[stem].get("model_height", 512) if gt else frame["model_height"]
+        if calibration_record:
+            pose = np.asarray(calibration_record["frames"][stem]["T_world_to_cam"])
+            k = np.asarray(calibration_record["frames"][stem]["K_model"]).copy()
+            width = height = calibration_record["intrinsics"]["model_width"]
         k[0] *= args.resolution / width
         k[1] *= args.resolution / height
         if gt:
@@ -105,6 +115,8 @@ def load_views(args, device):
             views[-1]["anchor"] = torch.tensor(target, device=device)
     return views, {"scale": float(scale), "rotation": rotation.tolist(),
                    "translation": translation.tolist(), "gt_assisted": gt is not None,
+                   "calibration_mode": calibration_record["mode"] if calibration_record else "ideal",
+                   "calibration_injected": calibration_record["injected"] if calibration_record else None,
                    "mask_source": "source-GT foreground" if gt else
                                   ("external masks" if args.mask_dir else "dataset RGBA alpha"),
                    "external_scan": args.external_depth if getattr(args, "lambda_external", 0) else None}

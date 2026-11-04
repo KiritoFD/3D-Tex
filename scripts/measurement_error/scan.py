@@ -29,14 +29,19 @@ def prepare(config):
     rgb = Path(config.get("rgb_run", str(root/"rgb24")))
     (rgb/"images").mkdir(parents=True, exist_ok=True)
     (rgb/"masks").mkdir(exist_ok=True)
+    source = config.get("rgb_source")
     for frame in frames:
-        shutil.copyfile(Path(config["rgb_source"])/frame["file"], rgb/"images"/frame["file"])
-        with Image.open(rgb/"images"/frame["file"]) as image:
-            image.getchannel("A").save(rgb/"masks"/frame["file"])
+        if source:
+            shutil.copyfile(Path(source)/frame["file"], rgb/"images"/frame["file"])
+            with Image.open(rgb/"images"/frame["file"]) as image:
+                image.getchannel("A").save(rgb/"masks"/frame["file"])
+        elif not (rgb/"images"/frame["file"]).exists():
+            raise ValueError(f"rgb branch without rgb_source requires pre-rendered {frame['file']}")
     hashes = {f["file"]: hashlib.sha256((rgb/"images"/f["file"]).read_bytes()).hexdigest() for f in frames}
-    (rgb/"capture_manifest.json").write_text(json.dumps({"label": "fixed_rgb24", "seed": 42,
-        "input_order": [f["file"] for f in frames], "input_sha256": hashes,
-        "note": "original 800px RGB fixed for all depth-error cases; source mesh mismatch to original RGB is shared"}, indent=2))
+    (rgb/"capture_manifest.json").write_text(json.dumps({"label": "fixed_rgb24" if source else "rendered_rgb24",
+        "seed": 42, "input_order": [f["file"] for f in frames], "input_sha256": hashes,
+        "note": "original 800px RGB fixed for all depth-error cases; source mesh mismatch to original RGB is shared"
+                if source else "RGB, alpha and GT depth rendered from the same frozen source mesh; no mismatch"}, indent=2))
     catalog = []
     for mode in config["noise_modes"]:
         if mode not in ("iid", "view_bias"):

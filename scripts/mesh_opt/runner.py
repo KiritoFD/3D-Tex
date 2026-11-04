@@ -2,6 +2,7 @@
 import argparse
 import hashlib
 import json
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -12,6 +13,12 @@ import torch
 from mesh_opt.geometry import (displacement_loss, regularizer_graph, tolerance_loss,
                                make_lattice, lattice_offsets)
 from mesh_opt.inputs import load_views
+
+
+def tensor_sha(tensor):
+    """Byte-exact fingerprint of a tensor's float32 values (bit-level comparison)."""
+    array = tensor.detach().to("cpu", torch.float32).contiguous().numpy()
+    return hashlib.sha256(array.tobytes()).hexdigest()
 
 
 def main():
@@ -47,6 +54,14 @@ def main():
     parser.add_argument("--anchor-gate-voxels", type=float, default=4.)
     parser.add_argument("--seed", type=int, default=20261103)
     parser.add_argument("--print-every", type=int, default=25)
+    parser.add_argument("--trace-file", help="JSONL of per-step parameter/gradient hashes")
+    parser.add_argument("--trace-every", type=int, default=0,
+                        help="hash every Nth step when --trace-file is set")
+    parser.add_argument("--trace-detail-at", type=int, default=0,
+                        help="also hash rendered depth/alpha and the graph prior at step N")
+    parser.add_argument("--deterministic", action="store_true",
+                        help="torch.use_deterministic_algorithms plus fixed cuBLAS workspace")
+    parser.add_argument("--calibration", help="non-ideal calibration record; diagnostic rig only")
     parser.add_argument("--deformation", choices=["vertex", "lattice"], default="vertex")
     parser.add_argument("--lattice-spacing-voxels", type=float, default=8.)
     args = parser.parse_args()
@@ -55,6 +70,11 @@ def main():
     if args.lambda_external and not args.external_depth:
         raise ValueError("--lambda-external requires --external-depth")
     device = torch.device("cuda")
+    if args.deterministic:
+        os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+        torch.use_deterministic_algorithms(True)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
     torch.manual_seed(args.seed)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -73,6 +93,8 @@ def main():
         get_offsets = lambda: parameter
     with torch.no_grad():
         edges, degree, weights = regularizer_graph(initial, faces)
+    prior_hashes = {"weights": tensor_sha(weights), "degree": tensor_sha(degree),
+                    "edges": tensor_sha(edges.to(torch.float32))}
     views, provenance = load_views(args, device)
     depths = torch.cat([v["depth"][v["depth"] > 0] for v in views])
     renderer = NvdRenderer(near=float(depths.min()) * .2, far=float(depths.max()) * 3,
@@ -89,6 +111,11 @@ def main():
            "precision": {"optimisation": "float32", "initial_geometry": omega_manifest.get("aggregator_dtype")},
            "inputs": [v["name"] for v in views], "torch": torch.__version__,
            "gpu": torch.cuda.get_device_name(), "renderer": "nvdiffrast",
+           "deterministic": {"enabled": bool(args.deterministic),
+                             "use_deterministic_algorithms": torch.are_deterministic_algorithms_enabled(),
+                             "cublas_workspace": os.environ.get("CUBLAS_WORKSPACE_CONFIG"),
+                             "cudnn_deterministic": torch.backends.cudnn.deterministic},
+           "prior_hashes": prior_hashes,
            "parameter_shape": list(parameter.shape), "iters": []}
     if args.lambda_external:
         external = Path(args.external_depth)
@@ -97,6 +124,10 @@ def main():
             "depth_sha256": {v["name"]: hashlib.sha256(
                 (external/"depth"/f"{v['name']}.npy").read_bytes()).hexdigest() for v in views}}
     (out / "manifest.json").write_text(json.dumps(log, indent=2) + "\n")
+    trace = Path(args.trace_file) if args.trace_file else None
+    if trace:
+        trace.parent.mkdir(parents=True, exist_ok=True)
+        trace.write_text("")
     torch.cuda.reset_peak_memory_stats()
     started = time.time()
     for it in range(args.iters):
@@ -107,10 +138,14 @@ def main():
         # through the deformation map. This avoids 16 retained grid-sampling graphs.
         vertices = model_vertices.detach().requires_grad_(True)
         values = dict(sil=0., fs=0., prior=0., colmap=0., external=0.)
+        detail = {} if (args.trace_detail_at and it + 1 == args.trace_detail_at) else None
         for view in views:
             raster_k = view["k"].clone()
             raster_k[:2, 2] += args.pixel_center_offset
             depth, alpha = renderer.render_frame(vertices, faces_i32, raster_k, view["t"], args.resolution)
+            if detail is not None:
+                detail[f"depth_{view['name']}"] = tensor_sha(depth)
+                detail[f"alpha_{view['name']}"] = tensor_sha(alpha)
             fg = view["fg"]
             terms = {"sil": (alpha - fg.float()).abs().mean(),
                      "fs": (alpha[~fg] ** 2).mean()}
@@ -134,7 +169,17 @@ def main():
         values["reg"] = float(reg.detach())
         if not torch.isfinite(parameter.grad).all():
             raise FloatingPointError(f"nonfinite vertex gradient at iteration {it + 1}")
+        grad_sha = tensor_sha(parameter.grad) if trace else None
         opt.step()
+        if trace:
+            row = {"iter": it + 1, "grad_sha256": grad_sha,
+                   "param_sha256": tensor_sha(parameter),
+                   "offset_sha256": tensor_sha(get_offsets().detach()),
+                   "values": values}
+            if detail is not None:
+                row["detail"] = detail
+            with trace.open("a") as stream:
+                stream.write(json.dumps(row) + "\n")
         if it == 0 or (it + 1) % args.print_every == 0 or it + 1 == args.iters:
             current = get_offsets().detach()
             delta = current.norm(dim=1)

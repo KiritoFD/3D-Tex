@@ -1,0 +1,60 @@
+{
+  "version": 2,
+  "scope": "R0 repeatability and zero-error scene; R1/R2 add sweeps without overwriting v1 outputs",
+  "master": "data/scenes/measurement_precision_v2/master",
+  "source": "data/.cache/nerf-syn/lego_source.blend",
+  "train_meta": "data/scenes/nerf_lego/transforms_train.json",
+  "views": 24,
+  "stud_pitch_mm": 8.0,
+  "rgb_root": "data/scenes/measurement_error_v2/rgb",
+  "rgb_run": "data/scenes/measurement_error_v2/rgb/zero",
+  "root": "data/scenes/measurement_error_v2/scans",
+  "out": "outputs/measurement_error_v2",
+  "observation_resolution": 256,
+  "noise_rms_mm": [0.0],
+  "noise_modes": ["iid"],
+  "seeds": [42],
+  "voxel_mm": 1.0,
+  "trunc_voxels": 4.0,
+  "fscore_thresholds_mm": [0.5, 1.0, 2.0],
+  "evaluation_samples": 50000,
+  "evaluation_seed": 20261104,
+  "source_sharp_deg": 40.0,
+  "model_resolution": 512,
+  "aggregator_dtype": "bfloat16",
+  "tsdf_voxel_divisor": 256,
+  "tsdf_truncation_voxels": 4.0,
+  "optimizer": {
+    "iters": 300,
+    "lr": 0.05,
+    "deformation": "lattice",
+    "lattice_spacing_voxels": 4,
+    "lambda_prior": 0.1,
+    "tolerance_voxels": 1,
+    "lambda_external": 1.0,
+    "seed": 20261103
+  },
+  "repeatability": {
+    "repeats": 10,
+    "trace_every": 1,
+    "trace_detail_at": 1,
+    "deterministic": false,
+    "comparison": "same mesh, scan, omega, code and optimizer seed; only the process instance differs"
+  },
+  "calibration": {
+    "modes": ["ideal", "non_ideal"],
+    "ideal": "GT camera poses register the world; no injected pose error",
+    "non_ideal": "fixed world registration from ideal alignment, then injected pose/intrinsic error; never re-fitted with GT"
+  },
+  "rgb_sweep": {
+    "root": "data/scenes/measurement_error_v2/rgb",
+    "out": "outputs/measurement_error_v2/rgb",
+    "modes": ["zero"],
+    "rms_mm": [0.0],
+    "resolution": 800,
+    "warp_correlation_pixels": 16.0,
+    "render_samples": 256,
+    "render_seed": 42,
+    "min_free_commit_gib": 4.0
+  }
+}
