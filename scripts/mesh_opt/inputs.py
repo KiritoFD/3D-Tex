@@ -17,9 +17,34 @@ def remap(array, source_k, target_k, resolution):
     return result
 
 
+def depth_normals(depth, k, fg, jump=0.05):
+    """Camera-frame normals from a z-depth map; robust to depth discontinuities."""
+    h, w = depth.shape
+    yy, xx = np.indices((h, w), dtype=np.float64)
+    point = np.stack([(xx - k[0, 2]) / k[0, 0] * depth,
+                      (yy - k[1, 2]) / k[1, 1] * depth, depth], -1)
+    dx = np.zeros_like(point)
+    dy = np.zeros_like(point)
+    dx[:, :-2] = point[:, 2:] - point[:, :-2]
+    dy[:-2, :] = point[2:, :] - point[:-2, :]
+    normal = np.cross(dx, dy)
+    length = np.linalg.norm(normal, axis=-1)
+    valid = fg & (depth > 0) & (length > 1e-9)
+    valid &= (np.abs(np.roll(depth, -2, axis=1) - depth) <= jump * np.maximum(depth, 1e-6))
+    valid &= (np.abs(np.roll(depth, -2, axis=0) - depth) <= jump * np.maximum(depth, 1e-6))
+    normal[~valid] = 0
+    normal /= np.maximum(length, 1e-12)[..., None]
+    flip = (normal * point).sum(-1) > 0
+    normal[flip] *= -1
+    return normal.astype(np.float32), valid
+
+
 def load_views(args, device):
     omega = Path(args.omega)
     frames = json.loads((omega / "cameras.json").read_text())["frames"]
+    if getattr(args, "max_views", 0):
+        take = np.unique(np.linspace(0, len(frames) - 1, args.max_views).round().astype(int))
+        frames = [frames[i] for i in take]
     poses = np.asarray([f["T_world_to_cam"] for f in frames])
     scale, rotation, translation = 1., np.eye(3), np.zeros(3)
     gt = None
@@ -82,11 +107,16 @@ def load_views(args, device):
                      args.resolution)
         positive = conf[conf > 0]
         conf = np.clip(conf / max(float(np.percentile(positive, 95)), 1e-6), 0, 1)
-        views.append({"name": stem, "k": torch.tensor(k, device=device, dtype=torch.float32),
-                      "t": torch.tensor(pose, device=device, dtype=torch.float32),
-                      "fg": torch.tensor(fg, device=device),
-                      "depth": torch.tensor(depth, device=device),
-                      "confidence": torch.tensor(conf, device=device)})
+        view = {"name": stem, "k": torch.tensor(k, device=device, dtype=torch.float32),
+                "t": torch.tensor(pose, device=device, dtype=torch.float32),
+                "fg": torch.tensor(fg, device=device),
+                "depth": torch.tensor(depth, device=device),
+                "confidence": torch.tensor(conf, device=device)}
+        if getattr(args, "lambda_normal", 0):
+            normal, nvalid = depth_normals(depth, k, fg)
+            view["normal"] = torch.tensor(normal, device=device, dtype=torch.float32)
+            view["normal_valid"] = torch.tensor(nvalid, device=device)
+        views.append(view)
         if getattr(args, "lambda_external", 0):
             if not gt:
                 raise ValueError("external scan pilot requires explicit diagnostic calibrated rig")

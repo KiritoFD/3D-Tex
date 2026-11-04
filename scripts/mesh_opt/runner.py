@@ -10,8 +10,8 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from mesh_opt.geometry import (displacement_loss, regularizer_graph, tolerance_loss,
-                               make_lattice, lattice_offsets)
+from mesh_opt.geometry import (displacement_loss, normal_consistency, regularizer_graph,
+                               tolerance_loss, make_lattice, lattice_offsets, vertex_normals)
 from mesh_opt.inputs import load_views
 
 
@@ -35,12 +35,16 @@ def main():
     parser.add_argument("--mask-dir", help="external original-image-coordinate PNG masks")
     parser.add_argument("--images", help="RGBA images; alpha is an annotated mask, not inferred")
     parser.add_argument("--resolution", type=int, default=256)
+    parser.add_argument("--max-views", type=int, default=0,
+                        help="evenly spaced view subset; 0 uses every input view")
     parser.add_argument("--iters", type=int, default=300)
     parser.add_argument("--lr", type=float, default=.05, help="Adam displacement step in voxels")
     parser.add_argument("--voxel-size", type=float, required=True, help="voxel in the input mesh gauge")
     parser.add_argument("--lambda-sil", type=float, default=.3)
     parser.add_argument("--lambda-fs", type=float, default=.5)
     parser.add_argument("--lambda-reg", type=float, default=.1)
+    parser.add_argument("--lambda-normal", type=float, default=0.,
+                        help="normal consistency against VGGT depth normals")
     parser.add_argument("--lambda-prior", type=float, default=0., help="tolerance depth prior weight")
     parser.add_argument("--tolerance-voxels", type=float, default=2.)
     parser.add_argument("--lambda-colmap", type=float, default=0.)
@@ -137,12 +141,18 @@ def main():
         # Accumulate image gradients on one vertex leaf, then backpropagate once
         # through the deformation map. This avoids 16 retained grid-sampling graphs.
         vertices = model_vertices.detach().requires_grad_(True)
-        values = dict(sil=0., fs=0., prior=0., colmap=0., external=0.)
+        values = dict(sil=0., fs=0., prior=0., colmap=0., external=0., normal=0.)
         detail = {} if (args.trace_detail_at and it + 1 == args.trace_detail_at) else None
         for view in views:
             raster_k = view["k"].clone()
             raster_k[:2, 2] += args.pixel_center_offset
-            depth, alpha = renderer.render_frame(vertices, faces_i32, raster_k, view["t"], args.resolution)
+            if args.lambda_normal:
+                # Recompute inside the loop: each per-view backward frees this subgraph.
+                mesh_normals = vertex_normals(vertices, faces)
+                depth, alpha, normals = renderer.render_frame_normals(
+                    vertices, faces_i32, mesh_normals, raster_k, view["t"], args.resolution)
+            else:
+                depth, alpha = renderer.render_frame(vertices, faces_i32, raster_k, view["t"], args.resolution)
             if detail is not None:
                 detail[f"depth_{view['name']}"] = tensor_sha(depth)
                 detail[f"alpha_{view['name']}"] = tensor_sha(alpha)
@@ -153,6 +163,10 @@ def main():
                 terms["prior"] = tolerance_loss(depth, view["depth"], view["confidence"],
                     fg & (view["depth"] > 0) & (alpha.detach() > .99),
                     args.tolerance_voxels * args.voxel_size, args.voxel_size)
+            if args.lambda_normal:
+                terms["normal"] = normal_consistency(
+                    normals, view["normal"],
+                    view["normal_valid"] & (alpha.detach() > .99))
             if args.lambda_colmap:
                 terms["colmap"] = tolerance_loss(depth, view["anchor"], view["confidence"],
                     (view["anchor"] > 0) & (alpha.detach() > .99), 0., args.voxel_size)

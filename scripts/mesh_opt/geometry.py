@@ -41,6 +41,24 @@ def tolerance_loss(rendered, initial, confidence, valid, epsilon, voxel):
     return (weight * loss).sum() / weight.sum().clamp(min=1)
 
 
+def vertex_normals(vertices, faces):
+    """Area-weighted vertex normals; differentiable in `vertices`."""
+    tri = vertices[faces]
+    face = F.normalize(torch.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0], dim=1), dim=1)
+    normals = torch.zeros_like(vertices)
+    for corner in range(3):
+        normals.index_add_(0, faces[:, corner], face)
+    return F.normalize(normals, dim=1)
+
+
+def normal_consistency(rendered, prior, valid):
+    """Cosine distance between camera-facing normals, averaged over valid pixels."""
+    weight = valid.float()
+    cosine = (rendered * prior).sum(-1).clamp(-1, 1)
+    loss = (1 - cosine).clamp(min=0) * weight
+    return loss.sum() / weight.sum().clamp(min=1)
+
+
 def make_lattice(vertices, voxel, spacing_voxels):
     """Fixed trilinear sampling coordinates; parameters are displacements in voxels."""
     if spacing_voxels <= 0:
