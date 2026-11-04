@@ -48,8 +48,12 @@ def out_root(config):
     return Path(config["r1"]["out"])
 
 
-def names(config):
-    """Case list; the zero level is the frozen R0 baseline and is not re-run."""
+def names(config, position=None):
+    """Case list; the zero level is the frozen R0 baseline and is not re-run.
+
+    Joint cases are only meaningful at the joint position: applying translation
+    *and* rotation at the M2 stage alone is not the superposition being tested.
+    """
     item = spec(config)
     cases = []
     for level in item["translation_mm"]:
@@ -74,6 +78,8 @@ def names(config):
                 cases.append({"name": f"j{translation:g}mm_{rotation:g}deg_{distribution}_s{seed}",
                               "family": "joint", "translation_mm": float(translation),
                               "rotation_deg": float(rotation), "distribution": distribution, "seed": seed})
+    if position is not None and position != "joint":
+        cases = [case for case in cases if case["family"] != "joint"]
     return cases
 
 
@@ -206,10 +212,10 @@ def prepare(config, only):
         ("scale", "rotation", "translation", "origin_native", "voxel_native", "trunc_native", "shape")},
         indent=2)+"\n")
     positions = spec(config)["positions"]
-    for case in names(config):
-        if only and case["name"] not in only:
-            continue
-        for position in positions:
+    for position in positions:
+        for case in names(config, position):
+            if only and case["name"] not in only:
+                continue
             record, injected = write_record(config, position, case, reference)
             print("Record", position, case["name"], injected["translation_rms_mm"],
                   injected["rotation_rms_deg"], flush=True)
@@ -256,9 +262,8 @@ def gpu_free_gib():
 
 
 def run(config, only):
-    reference = None
     for position in spec(config)["positions"]:
-        for case in names(config):
+        for case in names(config, position):
             if only and case["name"] not in only:
                 continue
             target = out_root(config)/"external"/position/"m2"/case["name"]
@@ -292,7 +297,7 @@ def run(config, only):
 def evaluate(config):
     for position in spec(config)["positions"]:
         root = out_root(config)/"external"/position
-        catalog = [{"name": case["name"], "case": None} for case in names(config)]
+        catalog = [{"name": case["name"], "case": None} for case in names(config, position)]
         (root/"catalog.json").write_text(json.dumps(catalog, indent=2)+"\n")
         local = dict(config, out=str(root), root=str(root))
         (root/"config.json").write_text(json.dumps(local, indent=2)+"\n")
@@ -338,12 +343,12 @@ def zero_metrics(config):
 
 
 def collect(config):
-    cases = {case["name"]: case for case in names(config)}
     zero, zero_path = zero_metrics(config)
     summary = {}
     rows = []
     for position in spec(config)["positions"]:
         root = out_root(config)/"external"/position
+        cases = {case["name"]: case for case in names(config, position)}
         for name, case in cases.items():
             folder = root/"m2_eval"/name
             if not (folder/"distances.npz").exists():
