@@ -12,3 +12,6 @@ __pycache__/
 # Large derived assets (models/renders); regenerate with scripts/*.py
 deliverables/*
 !deliverables/README.md
+
+# Local ssh sync archives (transport only, never versioned)
+_sync_*.tar.gz
