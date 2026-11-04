@@ -412,7 +412,7 @@
             "silhouette_gt_reduction_median": 0.6530,
             "note": "silhouette-only is a coverage-bound diagnostic, not a veto"
           },
-          "level3_real_reconstruction": "not_run",
+          "level3_real_reconstruction": "fail_2026_11_05",
           "level4_final_task": "not_run",
           "baseline_choice": "nvdiffrec (DMTet/FlexiCubes + nvdiffrast); reuses the existing renderer and adds the surface parameterisation/regularisation Step 0.1 identified as missing"
         },
@@ -435,6 +435,97 @@
           "wall_seconds": 153,
           "peak_torch_mib": 856.8
         }
+      },
+      "level3_real_reconstruction": {
+        "date": "2026-11-05",
+        "status": "fail_2026_11_05",
+        "doc_section": "docs/experiments/72H_GEOMETRY.md #12.8",
+        "method": "nvdiffrec FlexiCubes geometry + existing nvdiffrast; 64^3 colour grid sampled at dual vertices; degree-2 SH diffuse/specular",
+        "setup": {
+          "start_mesh": "outputs/geometry_pruning/eval_carve_v35c30_conf/carve_v35c30/mesh.ply",
+          "start_mesh_sha256_16": "ecf994efd40a5d9c",
+          "cameras": "16 fixed GT cameras, poses and intrinsics never re-estimated",
+          "resolution": 256,
+          "grid_res": 160,
+          "iters": 100,
+          "supervision": "foreground RGB L1 + symmetric silhouette (w=0.5) + SIFT correspondence (w=0.02) + FlexiCubes L_dev (w=0.1)",
+          "correspondence": {"points": 217, "surface_coverage_2vox": 0.0122,
+                            "surface_coverage_1vox": 0.0018,
+                            "status": "weakly active; Lego texture is sparse"},
+          "baseline_reused": "outputs/geometry_pruning/eval_carve_v35c30_conf/surface_metrics.json (not recomputed)"
+        },
+        "metrics": {
+          "baseline": {"f1": 0.6315, "chamfer": 0.012580, "normal_mean_deg": 50.44,
+                       "sharp_recall": 0.6935, "sharp_precision": 0.3395, "burr_rate": 0.0162,
+                       "area": 30.69, "faces": 348875, "boundary_edges": 55397,
+                       "components": 3781},
+          "full_sA": {"f1": 0.4915, "chamfer": 0.026650, "normal_mean_deg": 53.61,
+                      "sharp_recall": 0.8231, "sharp_precision": 0.1761, "burr_rate": 0.6603,
+                      "accuracy_voxel": 3.990, "completeness_voxel": 0.644,
+                      "area": 90.95, "faces": 618374, "boundary_edges": 12, "components": 5},
+          "full_sB": {"f1": 0.4943, "chamfer": 0.026158, "normal_mean_deg": 53.76,
+                      "sharp_recall": 0.8191, "sharp_precision": 0.1743, "burr_rate": 0.6564,
+                      "accuracy_voxel": 3.905, "area": 92.16, "faces": 624912},
+          "init_only_sA": {"f1": 0.4821, "chamfer": 0.026159, "normal_mean_deg": 51.32,
+                           "sharp_recall": 0.6697, "sharp_precision": 0.2123,
+                           "accuracy_voxel": 3.738, "area": 62.82, "iters": 1},
+          "ablation": {
+            "nocorr": {"f1": 0.4892, "chamfer": 0.026714, "delta_within_noise": true},
+            "nosil": {"f1": 0.3822, "chamfer": 0.047994, "accuracy_voxel": 7.669},
+            "ldev_x10": {"f1": 0.5084, "chamfer": 0.025996, "area": 79.65},
+            "grid_256": {"f1": 0.4304, "chamfer": 0.032163, "faces": 2642494}
+          }
+        },
+        "noise_2seed": {
+          "seeds": [20261105, 20261106],
+          "f1": {"mean": 0.4929, "range": 0.0028, "half_range": 0.0014},
+          "chamfer": {"mean": 0.026404, "range": 0.000492, "half_range": 0.000246},
+          "normal_mean_deg": {"mean": 53.69, "range": 0.15},
+          "sharp_recall": {"mean": 0.8211, "range": 0.0040},
+          "sharp_precision": {"mean": 0.1752, "range": 0.0018}
+        },
+        "sharp_edges": "degraded: sharp precision 0.3395 -> 0.1752, burr 0.0162 -> 0.658, sharp accuracy 2.07 -> 4.89 voxel; explicit veto triggered",
+        "hole_and_thin": "holes closed topologically (boundary edges 55397 -> 12, components 3781 -> 5) but thin-structure fidelity lost (accuracy 1.35 -> 3.95 voxel); improvement and degradation conflict",
+        "attribution": {
+          "implementation": "dominant: SDF init on a non-watertight VGGT mesh (55397 boundary edges, 3781 components) inflates the extracted surface to 2.0-4.5x area before any supervision; three init routes failed",
+          "method": "direction evidence only: optimisation lifts F1 0.4821 -> 0.4915 (+0.0094, 7x noise) but trades precision for recall and inflates area 62.8 -> 90.9; cannot be separated from the init defect",
+          "resource": "not binding: grid 256 runs at 13.3 GB torch peak, 387 s, and is worse"
+        },
+        "invalid_runs": [
+          "full_sA first pass: device-side assert from a cached correspondence index after FlexiCubes changed the vertex count; fixed by rebuilding the KDTree association every iteration",
+          "tsdf_sA attempt 1: sdf length res^3 vs (res+1)^3 index assert; log outputs/step_baseline_20261105/invalid/tsdf_sA_attempt1_sdf_shape_mismatch.log",
+          "tsdf_init_sA: TSDF fusion init, 139.3 m2 vs 30.7 input, heldout silhouette IoU 0.366",
+          "tsdf_sA second pass: 228.9 m2, IoU 0.373",
+          "depthinit_sA: rendered-depth sign vote, inside_fraction 0.459, IoU 0.425"
+        ],
+        "resource": {
+          "valid_runs": 7,
+          "invalid_runs": 5,
+          "views": 16,
+          "resolution": 256,
+          "wall_seconds_main_batch": 441,
+          "seconds_per_run": [109.0, 108.8, 100.5, 113.0],
+          "peak_torch_mib": 3864,
+          "peak_smi_delta_mib": 5751,
+          "gpu_used_before_mib": 2671,
+          "blender": "/root/deps/blender/blender-3.3.9-linux-x64/blender",
+          "blender_note": "default /usr/local/bin/blender is 2.93 and cannot open the 3.0-authored lego_source.blend"
+        },
+        "heldout_render": {
+          "full_sA_primary": {"psnr": 16.999, "l1": 0.08729, "silhouette_iou": 0.92999},
+          "full_sA_all": {"psnr": 17.241, "l1": 0.08443, "silhouette_iou": 0.91895},
+          "full_sB_primary": {"psnr": 16.814, "l1": 0.08935, "silhouette_iou": 0.92827},
+          "ldev_sA_primary": {"psnr": 17.425, "l1": 0.08155, "silhouette_iou": 0.93750},
+          "note": "appearance-inclusive; no Level 2 render baseline exists, kept as the Level 4 reference only"
+        },
+        "evidence": {
+          "summary": "outputs/step_baseline_20261105/full_sA/summary.json",
+          "mesh_eval": "outputs/step_baseline_20261105/eval_all/surface_metrics.json",
+          "mesh_stats": "outputs/step_baseline_20261105/mesh_stats.json",
+          "log": "outputs/step_baseline_20261105/train.log",
+          "diag_log": "outputs/step_baseline_20261105/train_diag.log"
+        },
+        "next": "Level 4 not started; the SDF initialisation must be fixed before the method itself can be judged"
       },
       "arms": {
         "A": "Omega TSDF -> ExMesh",
