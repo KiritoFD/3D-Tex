@@ -40,3 +40,27 @@ python3 scripts/doctor.py
 ```
 
 Paper PDFs are fetched **on demand**, not committed. `scripts/run_all.sh` explicitly refuses to run the retired 3DGS branch and does not claim the new Mesh/UV path has been implemented.
+
+## Syncing the local checkout with the 4090 host
+
+The 4090 host (`ssh 4090`, `/root/3dtex`) has no GitHub access; its `origin` is a local
+bundle (`/root/_sync.bundle`), so commits are published to GitHub from the local clone.
+
+One-time setup in the local clone:
+
+```bash
+git remote add server ssh://4090/root/3dtex
+ssh 4090 'cd /root/3dtex && git config receive.denyCurrentBranch updateInstead'
+```
+
+Every sync, from the local clone with `main` checked out:
+
+```bash
+git fetch server main && git merge --ff-only FETCH_HEAD   # take commits made on the server
+git push server main                                      # publish local commits to the server worktree
+git push origin main                                      # publish to GitHub
+```
+
+Both directions are fast-forward only. A dirty server worktree rejects the push instead of
+overwriting it, and `updateInstead` updates the checked-out `main` in place. If GitHub is
+unreachable directly, `HTTPS_PROXY=http://127.0.0.1:7890 git push origin main` works here.
