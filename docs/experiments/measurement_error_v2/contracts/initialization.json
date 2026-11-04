@@ -1,0 +1,29 @@
+{
+  "voxel_source": 0.013456101925451389,
+  "scale": 4.6440393791091426,
+  "rotation": [
+    [
+      -0.9998692702848271,
+      -0.006489649101791105,
+      0.014809685838105942
+    ],
+    [
+      -0.016069898928658562,
+      0.29750020705787544,
+      -0.9545864995635254
+    ],
+    [
+      0.0017890468161756948,
+      -0.9546996968969127,
+      -0.29756560294569084
+    ]
+  ],
+  "translation": [
+    -0.06715538605867921,
+    3.8081107959660665,
+    1.1986164477258787
+  ],
+  "scope": "simulated calibrated rig with ideal registration; not deployment validation",
+  "gt_geometry_in_initial_fusion": false,
+  "rgb_run": "data\\scenes\\measurement_error_v2\\rgb\\zero"
+}

@@ -23,6 +23,9 @@
    但全部 24 帧 alpha 完全相同，RGB 只有 **107 / 15,360,000 像素（7.0e-6）差 1 个 8-bit 量化级**，
    最大差值 1 LSB。即：**几何零误差成立，RGB 只存在量化边界抖动**。
 5. **新零噪声基线已冻结**（§3），R1/R2 的所有比值与门限都以它为准。
+6. **本文档自包含**：`outputs/` 与 `data/` 下的二进制产物不入库，R0 的逐次重复数值（§1.5.1）、
+   地板/判据表（§1.5、§4）、全部契约与清单文件（§2.5，已随仓库入库并附 SHA256）、
+   复现命令（§6）都在文内，**不 clone 产物也能验收 R0**。
 
 ## 1. P0.1 重复性
 
@@ -118,6 +121,47 @@ but you set 'torch.use_deterministic_algorithms(True)'
 终损 3.0797 ± 0.0119（3.0620–3.0980）。**终损的标准差 0.39% 比多数被测档位的损失变化还大**，
 所以 R1/R2 一律用表面指标判定，不用损失比较档位。
 
+### 1.5.1 逐次重复原始数值（10 rep，可离线核对）
+
+`repeatability/zero_v2/metrics.json` 不随仓库入库，下表是该文件的完整逐 rep 数值，
+统计量可直接由这 10 行重算（均值/σ/极差/p05/p95 与 §1.5 一致）。列名与 `metrics.json`
+的 `rows[*]` 字段同名，单位均为 mm 或 °。
+
+| rep | chamfer_obs | chamfer_full | normal | normal_flat | normal_edge | F@1mm(obs) | recall@1mm | thin_rec@1mm | hole_fill | P90(obs) | P99(obs) |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| rep01 | 1.0797 | 2.0965 | 51.1485 | 49.9907 | 54.7339 | 0.6300 | 0.2873 | 0.1489 | 0.5841 | 1.8899 | 3.4245 |
+| rep02 | 1.0770 | 2.0866 | 51.3128 | 50.2149 | 54.7126 | 0.6316 | 0.2885 | 0.1486 | 0.5637 | 1.8873 | 3.4672 |
+| rep03 | 1.0775 | 2.0994 | 51.4211 | 50.2769 | 55.0000 | 0.6331 | 0.2862 | 0.1404 | 0.5859 | 1.8867 | 3.4533 |
+| rep04 | 1.0834 | 2.0977 | 51.1390 | 50.0060 | 54.6246 | 0.6290 | 0.2886 | 0.1483 | 0.5841 | 1.8748 | 3.4050 |
+| rep05 | 1.0664 | 2.0549 | 51.0951 | 49.9105 | 54.9171 | 0.6349 | 0.2872 | 0.1441 | 0.5752 | 1.8709 | 3.4318 |
+| rep06 | 1.0871 | 2.0984 | 51.1908 | 50.0368 | 54.7875 | 0.6289 | 0.2889 | 0.1483 | 0.5827 | 1.8814 | 3.4957 |
+| rep07 | 1.0886 | 2.1171 | 51.2770 | 50.3181 | 54.2340 | 0.6291 | 0.2849 | 0.1523 | 0.5990 | 1.8748 | 3.4571 |
+| rep08 | 1.0812 | 2.0635 | 51.1565 | 49.9811 | 54.7864 | 0.6311 | 0.2906 | 0.1396 | 0.5790 | 1.8834 | 3.4995 |
+| rep09 | 1.0811 | 2.0825 | 51.0177 | 49.9458 | 54.3275 | 0.6299 | 0.2857 | 0.1362 | 0.5810 | 1.8806 | 3.4815 |
+| rep10 | 1.0768 | 2.0941 | 51.0123 | 49.8994 | 54.5046 | 0.6322 | 0.2863 | 0.1454 | 0.5792 | 1.8810 | 3.5642 |
+
+由这 10 行可复算的关键量：Chamfer(obs) 均值 **1.0799**、σ 0.0059、极差 0.0222；
+法线均值 **51.177**、σ 0.1225；F(obs) 均值 **0.6310**、σ 0.0019。地板 `b = max(2σ, 极差)`：
+
+| 指标 | 2σ | 极差 | b | 验收地板 2b |
+|---|---:|---:|---:|---:|
+| chamfer_obs | 0.0118 | 0.0222 | 0.0222 | **0.0443**（4.10%） |
+| chamfer_full | 0.0346 | 0.0622 | 0.0622 | 0.1244（5.96%） |
+| normal | 0.2450 | 0.4088 | 0.4088 | 0.8177°（1.60%） |
+| F@1mm(obs) | 0.0038 | 0.0060 | 0.0060 | 0.0120（1.90%） |
+| recall@1mm | 0.0032 | 0.0057 | 0.0057 | 0.0114（3.95%） |
+| thin_rec@1mm | 0.0096 | 0.0161 | 0.0161 | 0.0323（22.2%）¹ |
+| hole_fill | 0.0168 | 0.0353 | 0.0353 | 0.0705（12.1%）¹ |
+| P90(obs) | 0.0116 | 0.0190 | 0.0190 | 0.0380（2.02%） |
+| P99(obs) | 0.0864 | 0.1592 | 0.1592 | 0.3185（9.18%） |
+
+¹ 这两行按上表 6 位小数重算得 0.0706 / 0.0322，§1.5 的 0.0705 / 0.0323 来自 `metrics.json`
+未截断的全精度值；差异 < 0.0001，不影响任何判据。
+
+口径说明：`chamfer_obs` 只在被观测到的 GT 区域上算（数值低、地板窄）；`chamfer_full`
+含未观测的 GT 完整性（数值高、地板宽）。`F@1mm(obs)` 是 §3 表里"observed 口径"的 F，
+不是 `2PR/(P+R)`；后者见 §3 的 0.3987。比较任何档位时**必须同为 observed 口径**。
+
 ### 1.6 解读与硬限制
 
 - 地板以上的差距才可报：Chamfer ≥ 4.10%、法线 ≥ 0.82°、F ≥ 1.90%、hole_fill ≥ 12.1%。
@@ -192,6 +236,52 @@ IoU < 0.95 或往返 > 0.5 px 时 `zero_scene.py --phase audit` 直接抛错，�
 
 三种误差定义在代码里分开并各自有单位测试：图像平面定位位移 px、相机中心平移 mm、
 轴向深度/整图共享偏差 mm。`0.1° @470 mm = 0.8206 mm` 的换算已被测试钉死。
+
+### 2.5 已入库契约与清单（不依赖 `outputs/` / `data/`）
+
+`outputs/`、`data/` 被 `.gitignore` 排除，但 R0 的判定证据不能只存在于本机。因此把 14 个
+**文本契约/清单**原样复制到 [docs/experiments/measurement_error_v2/contracts/](file:///G:/GitHub/3D-Tex/docs/experiments/measurement_error_v2/contracts/)，随仓库入库。
+二进制（`.ply` / `.npy` / `.png`）不入库，需按 §6 重跑得到。
+
+| 入库文件（`docs/experiments/measurement_error_v2/contracts/`） | 原始路径 | 字节 | SHA256 |
+|---|---|---:|---|
+| `initialization.json` | `outputs/measurement_error_v2/initialization.json` | 699 | `6c30f37b6d805946e44ca3150cf39f95b44a15df468069897afff7b839de2aee` |
+| `determinism_probe.json` | `outputs/measurement_error_v2/repeatability/probe.json` | 4,574 | `ea7fc95adb7fc07cd1fdbd0173a1707567516df62c3f596774cd5b16b4ad42d6` |
+| `zero_v2_repeatability.json` | `outputs/measurement_error_v2/repeatability/zero_v2/repeatability.json` | 18,356 | `e0c9e064ebdffc664cd91cac05f4b2618b1966026b9c938767346e56454fe9f1` |
+| `zero_v2_metrics.json` | `outputs/measurement_error_v2/repeatability/zero_v2/metrics.json` | 9,515 | `171f6d46a4e1bc64a29d9db7d37b67fb00a1326648b0b5c3b1311b8d67996f77` |
+| `master_protocol.json` | `data/scenes/measurement_precision_v2/master/protocol.json` | 1,705 | `740213a645f463ce59f4e5f5a1885c9bdf3a5945aba4ee64432748a952ec1b73` |
+| `master_scale.json` | `data/scenes/measurement_precision_v2/master/scale.json` | 11,328 | `da7ab941d2218dfcf4d9b9678981792007063ebc9a30b9bab74826ebcf58cb24` |
+| `master_source_manifest.json` | `data/scenes/measurement_precision_v2/master/source_manifest.json` | 5,720 | `0eb2189bd78da067e05357e455859aa9d16bfc479cb7f07e5a77fb18fc87f3d1` |
+| `rgb_zero_capture_manifest.json` | `data/scenes/measurement_error_v2/rgb/zero/capture_manifest.json` | 2,574 | `cb31e65b2608021e1349d5739b9176817450e98a8b47e41cc4578320d20c4030` |
+| `rgb_zero_contract.json` | `data/scenes/measurement_error_v2/rgb/zero/contract.json` | 19,532 | `2be8b0bfb6718ad51b229f1dd3bd797c9a33b0f149809c50cdee492fcce09764` |
+| `rgb_zero_perturbation.json` | `data/scenes/measurement_error_v2/rgb/zero/perturbation.json` | 14,110 | `ce9893499e250c930a9df08f530aa41e0d86d5467cccef3f3fb55fd53efa8f2a` |
+| `rgb_zero_render_report.json` | `data/scenes/measurement_error_v2/rgb/zero/render_report.json` | 6,653 | `49934ea5ecec66fc34f2fa0ec1724b3c99b8fb9928d9ef7b0b7c3192c68e9891` |
+| `rgb_zero_rig.json` | `data/scenes/measurement_error_v2/rgb/zero/rig.json` | 56,444 | `a087bf36fdc773251ad0c4116b74098da567329a70734c1df1e41a8991385a43` |
+| `scan_iid_rms0_s42_cameras.json` | `data/scenes/measurement_error_v2/scans/scans/iid_rms0_s42/cameras.json` | 35,886 | `27b52883d3dec0e34c7d40a93faab79d5e8e3607f0b208494495d2369bda6b6a` |
+| `scan_iid_rms0_s42_manifest.json` | `data/scenes/measurement_error_v2/scans/scans/iid_rms0_s42/manifest.json` | 3,439 | `8242795ad4cb61e8962cee1d76a5ec14063422af7112d98463c8ba5834bf53e7` |
+
+说明：
+
+- 复制是**逐字节复制**，表内 SHA256 与 §2.1 中同文件哈希一致（`source_manifest` / `contract` /
+  `perturbation` / `rig` / `scan manifest` 五项完全相同），可对上。
+- 该目录带 [`contracts/.gitattributes`](file:///G:/GitHub/3D-Tex/docs/experiments/measurement_error_v2/contracts/.gitattributes)，内容为
+  `*.json -text`：关闭 EOL 转换。原因是其中 6 个原始文件是 CRLF、8 个是 LF（`core.autocrlf=true`
+  会把 LF 文件在检出时改成 CRLF），不关闭转换就无法保证任何平台上检出后仍逐字节相同。
+  已验证 index blob 与工作区字节一致，因此上表 SHA256 就是**检出后的文件哈希**。
+- `zero_v2_metrics.json` 含 §1.5.1 的 10 行逐 rep 原始值；`zero_v2_repeatability.json` 含
+  300 步逐步哈希与首次分叉定位。二者配合 §1.5.1 可独立复算全部地板。
+- `scan_iid_rms0_s42_manifest.json` 记录 24 个 `depth/r_*.npy` 的 SHA256；这些 `.npy`
+  本身不入库，但 §2.1 的"逐字节等于 GT"结论由清单 + `test_zero_rms_scan_reproduces_gt_depth_bytes`
+  两条独立证据支撑。
+- `rgb_zero_rig.json` / `rgb_zero_capture_manifest.json` 记录 24 帧的逐帧渲染 SHA 与相机，
+  PNG 本身不入库（§2.2 的 107 / 15.36M 像素统计已写在文内）。
+- 校验命令（PowerShell）：
+
+```powershell
+Get-ChildItem docs/experiments/measurement_error_v2/contracts/*.json |
+  Get-FileHash -Algorithm SHA256 |
+  ForEach-Object { "{0} {1}" -f (Split-Path $_.Path -Leaf), $_.Hash.ToLower() }
+```
 
 ## 3. 冻结的新零噪声基线（与 v1 对照）
 
@@ -275,11 +365,22 @@ Start-Process -FilePath $exe -ArgumentList $args -WorkingDirectory . -NoNewWindo
 
 # 3) 重复性与地板（WSL，torch 2.14.1+cu126）
 wsl -e /root/venvs/mesh-splatting/bin/python scripts/measurement_error/determinism_probe.py
-wsl -e /root/venvs/mesh-splatting/bin/python scripts/measurement_error/repeatability.py --phase all --tag zero_v2 --repeats 10
+wsl -e /root/venvs/mesh-splatting/bin/python scripts/measurement_error/repeatability.py --phase run --tag zero_v2 --repeats 10
+wsl -e /root/venvs/mesh-splatting/bin/python scripts/measurement_error/repeatability.py --phase analyze --tag zero_v2
+wsl -e /root/venvs/mesh-splatting/bin/python scripts/measurement_error/repeatability.py --phase evaluate --tag zero_v2
 ```
 
-产物：`outputs/measurement_error_v2/repeatability/zero_v2/{repeatability.json, metrics.json}`；
-探针 `repeatability/probe.json`；重渲对照 `outputs/measurement_error_v2/repro_render/`。
+`repeatability.py` 的三段可分开执行（也可 `--phase all`）：
+
+| phase | 产物 | 对应本文章节 |
+|---|---|---|
+| `run` | `repeatability/zero_v2/run.json`、`m2/rep01..rep10/manifest.json` + `*.ply` | §1.1、§1.3 |
+| `analyze` | `repeatability/zero_v2/repeatability.json`（300 步哈希、首次分叉、顶点散布） | §1.3 |
+| `evaluate` | `repeatability/zero_v2/metrics.json`（10 行逐 rep + 地板统计） | §1.5、§1.5.1 |
+
+产物全部落在 `outputs/measurement_error_v2/`，**不入库**；探针输出 `repeatability/probe.json`，
+重渲对照 `outputs/measurement_error_v2/repro_render/`。没有产物时，用 §1.5.1 的 10 行表和
+§2.5 的 14 个契约文件即可复核 §1.5、§3、§4 的全部数值。
 
 ## 7. 遗留缺口与限制
 

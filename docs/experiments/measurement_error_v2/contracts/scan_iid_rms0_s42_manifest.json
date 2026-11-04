@@ -1,0 +1,126 @@
+{
+  "name": "iid_rms0_s42",
+  "noise_mode": "iid",
+  "seed": 42,
+  "target_rms_mm": 0.0,
+  "realized_rms_mm": 0.0,
+  "mean_error_mm": 0.0,
+  "definition": "camera-z depth error; iid pixel Gaussian or per-view constant Gaussian bias; globally normalized to target RMS",
+  "mm_per_source_unit": 125.83285964739473,
+  "source_sha256": "91c2824364ac9cd957fb86f33329bd4d98e8c493be05c5f08727395a02deae90",
+  "gt_ray_audit": {
+    "method": "CUDA Warp BVH first-hit ray-triangle intersections; no rasterization",
+    "warp": "1.19.0",
+    "gpu": "NVIDIA GeForce RTX 4070 Laptop GPU",
+    "bvh_rays": 3072,
+    "shared_hits": 904,
+    "support_mismatches": 0,
+    "max_error_mm": 0.0011185441001650967,
+    "mean_error_mm": 7.656749494705906e-05,
+    "pixel_convention": "integer-index pixel centers, cx=(W-1)/2",
+    "cpu_rendering": false
+  },
+  "input_order": [
+    "r_0.png",
+    "r_1.png",
+    "r_10.png",
+    "r_11.png",
+    "r_13.png",
+    "r_17.png",
+    "r_24.png",
+    "r_30.png",
+    "r_31.png",
+    "r_32.png",
+    "r_34.png",
+    "r_35.png",
+    "r_36.png",
+    "r_4.png",
+    "r_46.png",
+    "r_5.png",
+    "r_59.png",
+    "r_60.png",
+    "r_66.png",
+    "r_68.png",
+    "r_7.png",
+    "r_82.png",
+    "r_89.png",
+    "r_93.png"
+  ],
+  "config": {
+    "version": 2,
+    "scope": "R0 repeatability and zero-error scene; R1/R2 add sweeps without overwriting v1 outputs",
+    "master": "data/scenes/measurement_precision_v2/master",
+    "source": "data/.cache/nerf-syn/lego_source.blend",
+    "train_meta": "data/scenes/nerf_lego/transforms_train.json",
+    "views": 24,
+    "stud_pitch_mm": 8.0,
+    "rgb_root": "data/scenes/measurement_error_v2/rgb",
+    "rgb_run": "data/scenes/measurement_error_v2/rgb/zero",
+    "root": "data/scenes/measurement_error_v2/scans",
+    "out": "outputs/measurement_error_v2",
+    "observation_resolution": 256,
+    "noise_rms_mm": [
+      0.0
+    ],
+    "noise_modes": [
+      "iid"
+    ],
+    "seeds": [
+      42
+    ],
+    "voxel_mm": 1.0,
+    "trunc_voxels": 4.0,
+    "fscore_thresholds_mm": [
+      0.5,
+      1.0,
+      2.0
+    ],
+    "evaluation_samples": 50000,
+    "evaluation_seed": 20261104,
+    "source_sharp_deg": 40.0,
+    "model_resolution": 512,
+    "aggregator_dtype": "bfloat16",
+    "tsdf_voxel_divisor": 256,
+    "tsdf_truncation_voxels": 4.0,
+    "optimizer": {
+      "iters": 300,
+      "lr": 0.05,
+      "deformation": "lattice",
+      "lattice_spacing_voxels": 4,
+      "lambda_prior": 0.1,
+      "tolerance_voxels": 1,
+      "lambda_external": 1.0,
+      "seed": 20261103
+    },
+    "repeatability": {
+      "repeats": 10,
+      "trace_every": 1,
+      "trace_detail_at": 1,
+      "deterministic": false,
+      "comparison": "same mesh, scan, omega, code and optimizer seed; only the process instance differs"
+    },
+    "calibration": {
+      "modes": [
+        "ideal",
+        "non_ideal"
+      ],
+      "ideal": "GT camera poses register the world; no injected pose error",
+      "non_ideal": "fixed world registration from ideal alignment, then injected pose/intrinsic error; never re-fitted with GT"
+    },
+    "rgb_sweep": {
+      "root": "data/scenes/measurement_error_v2/rgb",
+      "out": "outputs/measurement_error_v2/rgb",
+      "modes": [
+        "zero"
+      ],
+      "rms_mm": [
+        0.0
+      ],
+      "resolution": 800,
+      "warp_correlation_pixels": 16.0,
+      "render_samples": 256,
+      "render_seed": 42,
+      "min_free_commit_gib": 4.0
+    }
+  }
+}

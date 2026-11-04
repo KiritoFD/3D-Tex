@@ -1,0 +1,136 @@
+{
+  "device": "NVIDIA GeForce RTX 4070 Laptop GPU",
+  "torch": "2.14.1+cu126",
+  "cublas_workspace": null,
+  "deterministic_algorithms": false,
+  "probes": [
+    {
+      "probe": "index_add_forward",
+      "repeat_identical": false,
+      "max_abs_diff": 2.384185791015625e-07,
+      "sha256": [
+        "f32f7eaaab9b1991e49b85d09739f6a1ec3890326d04bc73395bcb8c78fd4262",
+        "fa3f6d83f7631092ae26080d7702b1cde66dad3899dc815eaec1882d07ff31eb"
+      ],
+      "note": "used by regularizer_graph and displacement_loss every step"
+    },
+    {
+      "probe": "index_add_sorted_cumsum",
+      "repeat_identical": true,
+      "max_abs_diff": 0.0,
+      "sha256": [
+        "0cf75356aa75aa29834d49ae5a9c484f9cb9b9181cb56f413225835b875ea75b",
+        "0cf75356aa75aa29834d49ae5a9c484f9cb9b9181cb56f413225835b875ea75b"
+      ],
+      "note": "order-independent summation replacement candidate",
+      "max_abs_diff_vs_index_add": 4.9345195293426514e-05
+    },
+    {
+      "probe": "grid_sample_forward",
+      "repeat_identical": true,
+      "max_abs_diff": 0.0,
+      "sha256": [
+        "fc22ef4793ec734f8075f3de89b0cf5e83bcff05cadb29d8a1198514ca29bbd2",
+        "fc22ef4793ec734f8075f3de89b0cf5e83bcff05cadb29d8a1198514ca29bbd2"
+      ],
+      "note": "lattice_offsets in mesh_opt.geometry"
+    },
+    {
+      "probe": "grid_sample_backward",
+      "repeat_identical": false,
+      "max_abs_diff": 7.152557373046875e-07,
+      "sha256": [
+        "75df32f63b4b85c81d9cbb15611dbe9629555f36c62d303c26f7f6975b156d91",
+        "c8de29eebc1e761c4665bab9340ad5ad9b0e8bacdebb0cbc6cc833ffec8d2695"
+      ],
+      "note": "documented nondeterministic CUDA scatter-add backward"
+    },
+    {
+      "probe": "cublas_matmul",
+      "repeat_identical": true,
+      "max_abs_diff": 0.0,
+      "sha256": [
+        "e66c98ad1ede006226c102193e8e7fe64f5f412088532bad7417319ab5f5a7d0",
+        "e66c98ad1ede006226c102193e8e7fe64f5f412088532bad7417319ab5f5a7d0"
+      ],
+      "note": "cuBLAS reduction order under fixed workspace"
+    },
+    {
+      "probe": "adam_step",
+      "repeat_identical": true,
+      "max_abs_diff": 0.0,
+      "sha256": [
+        "3e3b07fe9fb45d122198d78fbe4e512a7ba3683f6fb649588b9204436a9e461f",
+        "3e3b07fe9fb45d122198d78fbe4e512a7ba3683f6fb649588b9204436a9e461f"
+      ],
+      "note": "elementwise update; expected deterministic"
+    },
+    {
+      "probe": "rasterize_interpolate_forward",
+      "repeat_identical": true,
+      "max_abs_diff": 0.0,
+      "sha256": [
+        "4cb18db02245f7fb51ba28f425874007bf58ad4ce061093f9b9714e3709f328c",
+        "4cb18db02245f7fb51ba28f425874007bf58ad4ce061093f9b9714e3709f328c"
+      ],
+      "note": "nvdiffrast rasterize+interpolate; no antialias"
+    },
+    {
+      "probe": "render_depth_forward",
+      "repeat_identical": false,
+      "max_abs_diff": 4.5299530029296875e-06,
+      "sha256": [
+        "1e1de8a947923c37f155759f259f0d577f36fa03e5a74a0efb0b45fe8a5d58e3",
+        "f6236c3206ef9b0c3dcfe9a801213cd25151a9924ceac7e788f61bacf5b9ca74"
+      ],
+      "note": "includes antialias"
+    },
+    {
+      "probe": "render_alpha_forward",
+      "repeat_identical": false,
+      "max_abs_diff": 2.9802322387695312e-08,
+      "sha256": [
+        "6ed779f122e3018ac8a8968376d7dc4ca32aa7e03da6e7df2cc07ef1c5359dc8",
+        "020b7d7297d511263b9f726c619141c71f7c10e0fb231d256528c501455329e2"
+      ],
+      "note": "includes antialias"
+    },
+    {
+      "probe": "render_backward",
+      "repeat_identical": false,
+      "max_abs_diff": 6.103515625e-05,
+      "sha256": [
+        "6d72aa2f65c92b1bc6eb7f8748caabcb5cb7a69ecf8ecaad0edacef86abfb41b",
+        "370934e4c7114c32b7b90918d20bc4a1da5a0518124db508ee367d85f273a7ee"
+      ],
+      "note": "antialias + interpolate backward; atomic accumulation suspect"
+    },
+    {
+      "probe": "render_backward_without_antialias",
+      "repeat_identical": false,
+      "max_abs_diff": 4.76837158203125e-07,
+      "sha256": [
+        "229a243a49a2a0c1a57dff1674ad022440e17945b5e1e08deba1723b83c3cca0",
+        "391b6c90ce48f2cae4259d0caf1af72587fb2a1b2cb29cb5894c21bc724d3b5f"
+      ],
+      "note": "same loss and depth formula, antialias removed"
+    }
+  ],
+  "summary": {
+    "nondeterministic": [
+      "index_add_forward",
+      "grid_sample_backward",
+      "render_depth_forward",
+      "render_alpha_forward",
+      "render_backward",
+      "render_backward_without_antialias"
+    ],
+    "deterministic": [
+      "index_add_sorted_cumsum",
+      "grid_sample_forward",
+      "cublas_matmul",
+      "adam_step",
+      "rasterize_interpolate_forward"
+    ]
+  }
+}

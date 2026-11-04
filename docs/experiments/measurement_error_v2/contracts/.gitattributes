@@ -1,0 +1,4 @@
+# These files are byte-for-byte copies of the frozen R0 contracts, and the SHA256
+# values in MEASUREMENT_PRECISION_V2.md §2.5 are of the original bytes. Disable all
+# EOL conversion so a checkout reproduces them exactly on any platform.
+*.json -text

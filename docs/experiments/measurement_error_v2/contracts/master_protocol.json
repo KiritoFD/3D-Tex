@@ -1,0 +1,97 @@
+{
+  "config": {
+    "source": "data/.cache/nerf-syn/lego_source.blend",
+    "train_meta": "data/scenes/nerf_lego/transforms_train.json",
+    "root": "data/scenes/measurement_precision",
+    "out": "outputs/measurement_quality",
+    "views": 24,
+    "view_selection": "farthest unit-camera-direction, start train frame 0, then sort numeric indices",
+    "master_resolution": 4096,
+    "render_samples": 256,
+    "render_denoise": false,
+    "render_seed": 42,
+    "model_resolution": 512,
+    "aggregator_dtype": "bfloat16",
+    "seeds": [
+      42,
+      43,
+      44
+    ],
+    "stud_pitch_mm": 8.0,
+    "rgb_resolutions": [
+      256,
+      512,
+      1024,
+      2048,
+      4096
+    ],
+    "quality_resolution": 1024,
+    "blur_sigma_pixels": [
+      0.0,
+      0.5,
+      1.0,
+      2.0
+    ],
+    "rgb_noise_sigma_8bit": [
+      0.0,
+      1.0,
+      3.0,
+      8.0
+    ],
+    "depth_sigma_mm": [
+      0.0,
+      0.02,
+      0.1,
+      0.5,
+      1.0,
+      5.0
+    ],
+    "calibration_rms_pixels": [
+      0.0,
+      0.1,
+      0.25,
+      0.5,
+      1.0,
+      2.0
+    ],
+    "scan_spacing_mm": [
+      0.1,
+      0.5,
+      1.0,
+      5.0
+    ],
+    "fscore_thresholds_mm": [
+      0.5,
+      1.0,
+      2.0
+    ]
+  },
+  "indices": [
+    0,
+    1,
+    4,
+    5,
+    7,
+    10,
+    11,
+    13,
+    17,
+    24,
+    30,
+    31,
+    32,
+    34,
+    35,
+    36,
+    46,
+    59,
+    60,
+    66,
+    68,
+    82,
+    89,
+    93
+  ],
+  "source_sha256": "91c2824364ac9cd957fb86f33329bd4d98e8c493be05c5f08727395a02deae90",
+  "meta_sha256": "3fb884df23d4d4e64f8d376881f15cd58d3f15d295ead2a6eb11aafb3eac5ece"
+}

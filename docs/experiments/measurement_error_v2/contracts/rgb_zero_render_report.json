@@ -1,0 +1,155 @@
+{
+  "geometry": "source_bvh viewport-evaluated geometry frozen for RGB",
+  "vertices": 1090053,
+  "triangles": 2035378,
+  "mesh_sha256": "703b24c3c183e385d851307a92d8ae78eea1f12fb0a95c3014b537b13991ef81",
+  "render_options": {
+    "resolution": 800,
+    "samples": 256,
+    "seed": 42,
+    "denoising": false,
+    "device": "GPU",
+    "backend": "OPTIX"
+  },
+  "devices": [
+    {
+      "name": "NVIDIA GeForce RTX 4070 Laptop GPU",
+      "type": "CUDA",
+      "use": false
+    },
+    {
+      "name": "AMD Ryzen 9 7940HX",
+      "type": "CPU",
+      "use": false
+    },
+    {
+      "name": "NVIDIA GeForce RTX 4070 Laptop GPU",
+      "type": "OPTIX",
+      "use": true
+    }
+  ],
+  "frames": {
+    "r_0.png": {
+      "seconds": 5.035307600046508,
+      "sha256": "778f19549ae40fc7e314532a01787e6c6f070022a1f4cbe9fe28d5e686cf93b2",
+      "pixel_sha256": "e9fac96c351b1129f1b29d7c97d312d6d9821ba97fd4f3208c1443e280dad293"
+    },
+    "r_1.png": {
+      "seconds": 2.9756760000018403,
+      "sha256": "8ad33d056c44d44065b2b8db876a848536db50b006e3a127274db783f4980786",
+      "pixel_sha256": "54614b1bd04c9ccf5aa287889eca1a96a520fbe5eb37fc3a6f67b3198c00cf61"
+    },
+    "r_10.png": {
+      "seconds": 2.8281028000055812,
+      "sha256": "79e494fc79af67f1a7a90a7ffacc2328a38e548809ce80c6f18219d9edb1148d",
+      "pixel_sha256": "1a007d8da67f6eab32984139478f1ce573d7c64b7ddcb684385098321563fcbf"
+    },
+    "r_11.png": {
+      "seconds": 3.1047061000135727,
+      "sha256": "48fdbdb25478aa05a6e1060d537726b7c5e272ce13301f233ed0733b111e70ea",
+      "pixel_sha256": "a8b02ee9244351fb91afc83bc2fec07546609008817c87c834c4ed2bcb8b48d0"
+    },
+    "r_13.png": {
+      "seconds": 2.8451599000254646,
+      "sha256": "b294a68f6de11fdbde085a4280c1d22f3224af3615223a414062dd9a5e0ed33c",
+      "pixel_sha256": "572756333ee6d8b1279c25cfbd9b2b206a4d5d18fed8bb70804d9eb68f942464"
+    },
+    "r_17.png": {
+      "seconds": 3.2707282000337727,
+      "sha256": "702bae2a4dec48a2d7362b2fa8be79811c9057ba19e10f3d831ee39f8c7d8e8f",
+      "pixel_sha256": "4d335c9cad438b3d7ec75fed81a802ec7b6f920567b99865b8edd8f361808fed"
+    },
+    "r_24.png": {
+      "seconds": 3.5561546999961138,
+      "sha256": "4cfad84e3d530264e1eb1471c63a7187d855a8caac15c03a767d0737b10a4587",
+      "pixel_sha256": "fc77613c5fc5327121338c23d054bd1e68fcd5fd056825b75644b12b6ae9847b"
+    },
+    "r_30.png": {
+      "seconds": 3.3923989000031725,
+      "sha256": "33953debce9b2026ff277f4f5507bd9fd36a333958e8cd2f9bb863b29ff578c8",
+      "pixel_sha256": "2646c26307dba10c07da7a2964a7924f9e337bcd3c900f5f25317f9f6c15c058"
+    },
+    "r_31.png": {
+      "seconds": 3.338935599953402,
+      "sha256": "b582fdc7bfdfffc0576f08514955aa359c0b0ffef5b50eda36c8fe0aeb022852",
+      "pixel_sha256": "05721a3551fd4b26901b5e062dd11584e6c4488c4f2a6aeeacbb1b7166d9626d"
+    },
+    "r_32.png": {
+      "seconds": 7.6327009000233375,
+      "sha256": "bca8ba1f4d16a5fc245233940742f33832baceb7c6ae8b90110ee9eb91338ec1",
+      "pixel_sha256": "260f1d5b785301f9e1cca1d7ded14d367d0bab08eb246d2db9904f21ed9dd846"
+    },
+    "r_34.png": {
+      "seconds": 3.3445221000001766,
+      "sha256": "9faef2f8bd7f4188225f9b802fb166edb3c7a4f74ad508785fbc19bba5911268",
+      "pixel_sha256": "2631b2c1fec546cd70de8a8f06c7dced2019f4f36d2a3dcd77d84dda0ce775f2"
+    },
+    "r_35.png": {
+      "seconds": 3.007435300038196,
+      "sha256": "7abc654aa00175b600d5bf0b375626ae15820c45f2011723de32f169668cc490",
+      "pixel_sha256": "8b4b75670ef4a49ec0d6ada7b7da1a1609466cf36ee1d242570d76b2e7ae568e"
+    },
+    "r_36.png": {
+      "seconds": 3.282873699965421,
+      "sha256": "0847219e07c921e1cc33d21541126e8dc866b3ec8fde7550a52222428c7dc53a",
+      "pixel_sha256": "c7f4adf4598435a60ef99544908f0e4f87e1deb18cf9cf9298c4fddaedaa7156"
+    },
+    "r_4.png": {
+      "seconds": 2.99748450005427,
+      "sha256": "5500baf55feb27c0731a453760beaca9a0edb6800de6c4fdbdcae00f64cc7317",
+      "pixel_sha256": "cf849a8eaaccec1fa0240786293aaedde8c9630599a9edae372f425304482ac6"
+    },
+    "r_46.png": {
+      "seconds": 2.941196299972944,
+      "sha256": "9c4530c24e414f0fccbca114f6f0aa574c496a037ec9f056ed52dc2f3e89016d",
+      "pixel_sha256": "289e0927935137a47b8a33f66753f8e5489e5eac11433015c823e4931e5e15a3"
+    },
+    "r_5.png": {
+      "seconds": 3.318437499983702,
+      "sha256": "d781c9278263ce89eda763b2f67031198d766d70f1c1e07f908d555192fde439",
+      "pixel_sha256": "ce65edd020973bc7950e80a53fd4de3933cd1cb5018c1b072dec4d03a44ddb82"
+    },
+    "r_59.png": {
+      "seconds": 3.190392999968026,
+      "sha256": "9b8cf6ae0c6e576b148b96438ff64983fcf75e651bb5bf904d7dab3f2b34ad4a",
+      "pixel_sha256": "9099a863db4fb55648bb1e8098e8fb61944120248b2615c44f2e705ab7c05068"
+    },
+    "r_60.png": {
+      "seconds": 2.7783923000097275,
+      "sha256": "2ebd096e0b29d3dc6d8bb25d66f99876574eab83eea7bb8d8e24c88c5e7decd9",
+      "pixel_sha256": "776bab17c81839e75ce969d05dcf41465dcdc78805f9f6d89dab1ebf8867a797"
+    },
+    "r_66.png": {
+      "seconds": 3.1297828999813646,
+      "sha256": "74898eb754c470df36aa799677c874d084c8d3e40eccdf8c3e3737491a176849",
+      "pixel_sha256": "986535597d00805ba799ba8032f5695343aa5e91ffe7289f26194b9387bd8675"
+    },
+    "r_68.png": {
+      "seconds": 3.143277199997101,
+      "sha256": "80e04d169386f7af92ba5401243d202b52998355e5e442eb70053638eac9f945",
+      "pixel_sha256": "c02acce20ed44c956eee6cdf8997c081eea79e41b570671c4b885983bedcfe0b"
+    },
+    "r_7.png": {
+      "seconds": 2.951323000015691,
+      "sha256": "9c7fa011b9d7b570780656eff1db23bbbdc3558b20813c9c29aec40e21052d18",
+      "pixel_sha256": "900a4d1c6bf9e67fa097589e125e9f201b3c045c92fb2cb52099d070bf8235e3"
+    },
+    "r_82.png": {
+      "seconds": 3.1558834000024945,
+      "sha256": "f190269c9047df64e8ef35b090803626d6de8f2fad21d49c482607e0fe512593",
+      "pixel_sha256": "fbbbe0dd89d0ae22c7f94f0f8594c29505adee042f90333cf37cc3ed9afff0ad"
+    },
+    "r_89.png": {
+      "seconds": 2.6196446999674663,
+      "sha256": "0e1817906a3381b80c7870cd83d88a63182da27bdd5053d7830749478985aeb5",
+      "pixel_sha256": "f500dd0d0775cf34c43fc0062a97f72df75b0e2e9577b522c261a5deb4c65e14"
+    },
+    "r_93.png": {
+      "seconds": 3.2884878999902867,
+      "sha256": "197ffb0db9c69c88cb52b54a365a2031d7dbeff3e322b4bbda4ab7d43c45c9f1",
+      "pixel_sha256": "b5759290071e3b1abb494c2c7306dcfb8e991b8105f56b5709798607bf3937ed"
+    }
+  },
+  "camera_source": "frozen GT cameras from the master gt_ray export; no jitter",
+  "note": "RGB, GT depth and the evaluation mesh all derive from the same frozen source mesh"
+}
