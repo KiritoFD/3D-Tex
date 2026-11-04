@@ -105,13 +105,25 @@ def perturb_intrinsics(k, focal_relative=0., principal_px=0., focal_sign=1.):
     return k
 
 
+def scalar_field(count, seed, distribution, target):
+    """Per-view scalar error with a target RMS; one unit field, scaled only."""
+    if target == 0:
+        return np.zeros(count)
+    rng = np.random.default_rng(seed)
+    unit = (np.repeat(rng.normal(size=1), count) if distribution in ("bias", "drift")
+            else rng.normal(size=count))
+    weight = weights(count, distribution)
+    magnitude = np.sqrt(np.mean((weight*unit)**2))
+    return (weight*unit)*(target/max(magnitude, 1e-12))
+
+
 def equivalent_shift_px(k, translation_mm, depth_mm):
     """Image-plane displacement of a camera translation at a given depth."""
     return translation_mm*k[0, 0]/depth_mm
 
 
 def build(config, translation_mm=0., rotation_deg=0., distribution="independent", seed=0,
-          focal_relative=0., principal_px=0., calibration_mode="non_ideal"):
+          focal_relative=0., principal_px=0., calibration_mode="non_ideal", intrinsics_mode="fixed"):
     rgb = Path(config["rgb_run"])
     resolution = config["observation_resolution"]
     predicted = json.loads((rgb/"geometry/omega/cameras.json").read_text())["frames"]
@@ -129,17 +141,31 @@ def build(config, translation_mm=0., rotation_deg=0., distribution="independent"
                     "definition": "no injected error; GT registered rig"}
     else:
         aligned, injected = perturb_poses(aligned, translation_mm, rotation_deg, distribution, seed, scale)
+    count = len(predicted)
+    if intrinsics_mode == "per_view":
+        focal = scalar_field(count, seed+7, distribution, focal_relative)
+        principal = scalar_field(count, seed+8, distribution, principal_px)
+    elif intrinsics_mode == "fixed":
+        focal = np.full(count, focal_relative)
+        principal = np.full(count, principal_px)
+    else:
+        raise ValueError(f"Unsupported intrinsics mode: {intrinsics_mode}")
     frames = {}
-    for frame, pose, anchor in zip(predicted, aligned, ideal):
+    for index, (frame, pose, anchor) in enumerate(zip(predicted, aligned, ideal)):
         ideal_k = np.asarray(shell[frame["frame"]]["K_model"], dtype=np.float64)
         frames[Path(frame["frame"]).stem] = {
             "T_world_to_cam": np.asarray(pose).tolist(),
-            "K_model": perturb_intrinsics(ideal_k, focal_relative, principal_px).tolist(),
-            "ideal_pose": np.asarray(anchor).tolist(), "ideal_K_model": ideal_k.tolist()}
+            "K_model": perturb_intrinsics(ideal_k, float(focal[index]), float(principal[index])).tolist(),
+            "ideal_pose": np.asarray(anchor).tolist(), "ideal_K_model": ideal_k.tolist(),
+            "focal_relative": float(focal[index]), "principal_px": float(principal[index])}
     return {"mode": calibration_mode, "registration": "locked",
             "registration_transform": registration, "injected": injected,
             "intrinsics": {"focal_relative": focal_relative, "principal_px": principal_px,
-                           "model_width": int(config["model_resolution"])},
+                           "model_width": int(config["model_resolution"]), "mode": intrinsics_mode,
+                           "realized_focal_relative_rms": float(np.sqrt(np.mean(focal**2))),
+                           "realized_principal_px_rms": float(np.sqrt(np.mean(principal**2))),
+                           "realized_focal_relative_max": float(np.abs(focal).max()),
+                           "realized_principal_px_max": float(np.abs(principal).max())},
             "frames": frames, "scale_mm_per_source_unit": scale,
             "note": "GT cameras are evaluation-only; the alignment is computed once in the ideal gauge"}
 
@@ -155,10 +181,11 @@ def main():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--focal-relative", type=float, default=0.)
     parser.add_argument("--principal-px", type=float, default=0.)
+    parser.add_argument("--intrinsics-mode", choices=["fixed", "per_view"], default="fixed")
     args = parser.parse_args()
     config = json.loads(Path(args.config).read_text())
     payload = build(config, args.translation_mm, args.rotation_deg, args.distribution, args.seed,
-                    args.focal_relative, args.principal_px, args.calibration_mode)
+                    args.focal_relative, args.principal_px, args.calibration_mode, args.intrinsics_mode)
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text(json.dumps(payload, indent=2)+"\n")
     print(json.dumps({"mode": payload["mode"], "injected": payload["injected"]}, indent=2), flush=True)

@@ -242,5 +242,55 @@ class LockedRegistration(unittest.TestCase):
                 load_views(args, "cpu")
 
 
+class IntrinsicField(unittest.TestCase):
+    """P1.2: fixed versus per-view intrinsic error, one unit field scaled."""
+
+    def test_scalar_field_matches_target_rms_and_is_paired(self):
+        from measurement_error.calibration import scalar_field
+        field = scalar_field(24, 42, "independent", .0025)
+        self.assertAlmostEqual(float(np.sqrt(np.mean(field**2))), .0025, places=9)
+        doubled = scalar_field(24, 42, "independent", .005)
+        np.testing.assert_allclose(doubled, 2*field, atol=1e-12)
+        self.assertEqual(float(scalar_field(24, 42, "independent", 0.).max()), 0.)
+
+    def test_fixed_intrinsics_are_identical_per_view(self):
+        from measurement_error.calibration import perturb_intrinsics, scalar_field
+        self.assertEqual(list(scalar_field(5, 42, "bias", .001)), [.001]*5)
+        k = np.array([[443.1, 0, 255.5], [0, 443.1, 255.5], [0, 0, 1.]])
+        wrong = perturb_intrinsics(k, .0025, .5)
+        self.assertAlmostEqual(wrong[0, 0]/k[0, 0], 1.0025)
+        self.assertAlmostEqual(wrong[0, 2]-k[0, 2], .5)
+        self.assertFalse(np.allclose(wrong, k))
+
+    def test_per_view_intrinsics_use_distinct_focal_lengths(self):
+        from measurement_error.calibration import perturb_intrinsics
+        field = np.array([.002, .001, .004])
+        ks = [perturb_intrinsics(np.eye(3), f) for f in field]
+        self.assertNotAlmostEqual(ks[0][0, 0], ks[1][0, 0])
+        self.assertAlmostEqual(ks[2][0, 0], 1.004)
+
+
+class SimilarityInversion(unittest.TestCase):
+    """P1.1: the locked Sim(3) maps the predicted gauge to the GT gauge exactly."""
+
+    def test_inverse_similarity_recovers_predicted_camera(self):
+        rng = np.random.default_rng(7)
+        a = rng.normal(size=(3, 3))
+        q, _ = np.linalg.qr(a)
+        rotation = q*np.sign(np.linalg.det(q))
+        scale, translation = 4.644, rng.normal(size=3)
+        predicted = np.eye(4)
+        predicted[:3, :3] = q
+        predicted[:3, 3] = rng.normal(size=3)
+        # forward map used by the pipeline: aligned = [R_p R^T | s t_p - R_p R^T t]
+        aligned = np.eye(4)
+        aligned[:3, :3] = predicted[:3, :3] @ rotation.T
+        aligned[:3, 3] = scale*predicted[:3, 3]-aligned[:3, :3] @ translation
+        recovered = np.eye(4)
+        recovered[:3, :3] = aligned[:3, :3] @ rotation
+        recovered[:3, 3] = (aligned[:3, :3] @ translation+aligned[:3, 3])/scale
+        np.testing.assert_allclose(recovered, predicted, atol=1e-12)
+
+
 if __name__ == "__main__":
     unittest.main()

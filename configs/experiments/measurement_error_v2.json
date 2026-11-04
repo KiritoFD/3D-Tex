@@ -46,6 +46,30 @@
     "ideal": "GT camera poses register the world; no injected pose error",
     "non_ideal": "fixed world registration from ideal alignment, then injected pose/intrinsic error; never re-fitted with GT"
   },
+  "r1": {
+    "out": "outputs/measurement_error_v2/r1",
+    "zero_control": "outputs/measurement_error_v2/repeatability/zero_v2",
+    "external": {
+      "translation_mm": [0.0, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0],
+      "rotation_deg": [0.0, 0.02, 0.05, 0.1, 0.2, 0.5],
+      "distributions": ["independent", "drift", "bias"],
+      "seeds": [42, 43, 44, 45, 46],
+      "positions": ["m2", "tsdf", "joint"],
+      "joint_pairs": [[0.5, 0.05], [1.0, 0.1], [2.0, 0.2]],
+      "min_free_gib": 2.0,
+      "note": "zero level is not re-run: the 10 R0 repetitions share byte-identical inputs with the m2 zero case"
+    },
+    "intrinsics": {
+      "out": "outputs/measurement_error_v2/r1/intrinsics",
+      "focal_relative": [0.0, 0.0005, 0.001, 0.0025, 0.005, 0.01],
+      "principal_px": [0.0, 0.1, 0.25, 0.5, 1.0, 2.0],
+      "modes": ["fixed", "per_view"],
+      "seeds": [42, 43, 44, 45, 46],
+      "fixed_repeats": 3,
+      "distortion_px": [0.0, 0.25, 0.5, 1.0, 2.0],
+      "note": "wrong-K on fixed photos versus lens-distortion render with correct/incorrect correction; px is the primary axis"
+    }
+  },
   "rgb_sweep": {
     "root": "data/scenes/measurement_error_v2/rgb",
     "out": "outputs/measurement_error_v2/rgb",
