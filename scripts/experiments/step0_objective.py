@@ -234,12 +234,25 @@ def masked_stats(rgb, alpha, view):
     return {"l1": full, "l1_core": core, "psnr": psnr, "silhouette_iou": iou}
 
 
-def photometric_loss(rgb, alpha, view, region="fg"):
+def silhouette_loss(alpha, view):
+    """Symmetric silhouette term: penalise both missing and spilled foreground."""
+    return (alpha - view["mask"].to(alpha.dtype)).abs().mean()
+
+
+def photometric_loss(rgb, alpha, view, region="fg", silhouette_weight=0.0):
+    """Masked RGB residual plus an optional symmetric silhouette term.
+
+    The Step 0 runs use silhouette_weight=0.0 (foreground-only). Step 0.1 uses
+    the symmetric variant; the two loss versions are not comparable.
+    """
     target, mask = view["rgb"], view["mask"]
     if region == "highlight":
         mask = view["highlight"]
     diff = (rgb - target).abs().mean(-1)
-    return diff[mask].mean() if mask.any() else rgb.sum() * 0.0
+    rgb_term = diff[mask].mean() if mask.any() else rgb.sum() * 0.0
+    if silhouette_weight:
+        rgb_term = rgb_term + silhouette_weight * silhouette_loss(alpha, view)
+    return rgb_term
 
 
 def render_color(renderer, mesh_vertices, faces_i32, normals, albedo, appearance, view, res):
@@ -442,9 +455,12 @@ def curvature_mask(mesh):
     vertex_mean = mesh["normals"][mesh["faces"]].mean(dim=1)
     disagreement = (1 - (face_normal * vertex_mean).sum(-1)).clamp(0, 2)
     crease = torch.zeros(len(mesh["vertices"]), device=mesh["vertices"].device)
+    count = torch.zeros_like(crease)
+    ones = torch.ones_like(disagreement)
     for corner in range(3):
         crease.index_add_(0, mesh["faces"][:, corner], disagreement)
-    return crease / 3.0
+        count.index_add_(0, mesh["faces"][:, corner], ones)
+    return crease / count.clamp(min=1)
 
 
 def gradient_case(mesh, appearance_state, train_views, delta_voxels, sign, args,

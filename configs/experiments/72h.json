@@ -387,6 +387,55 @@
           "invalid_first_pass": "outputs/step0_20261105/summary.json"
         }
       },
+      "step0_1_diagnostics": {
+        "note": "New separate test; the Step 0 80% NO-GO result and numbers are preserved unchanged",
+        "status": "level1_pass_level2_pass_2026_11_05",
+        "code_fixes": {
+          "local_deformation": "V_i(a) = V_i^0 + a*w_i*n_i with a sigma=4 voxel Gaussian bump; per-vertex direction ratio retired",
+          "finite_difference": "central difference h=0.2 voxel against autograd for scalar a",
+          "curvature_mask": "normalised by the actual number of incident faces instead of dividing by 3",
+          "photometric_loss": "optional symmetric silhouette term |alpha - GT mask| over the full image; Step 0 foreground-only loss is not comparable"
+        },
+        "gate_result": {
+          "level1_gradient_correctness": {
+            "pass": true,
+            "ad_fd_sign_agreement": 1.0,
+            "fd_relative_error_median": 0.4785,
+            "toward_proxy_ratio": 0.9167,
+            "cases": 12
+          },
+          "level2_supervision_effectiveness": {
+            "pass": true,
+            "combo_gt_final_abs_voxel_median": 0.0349,
+            "combo_gt_reduction_median": 0.9651,
+            "silhouette_gt_final_abs_voxel_median": 0.3470,
+            "silhouette_gt_reduction_median": 0.6530,
+            "note": "silhouette-only is a coverage-bound diagnostic, not a veto"
+          },
+          "level3_real_reconstruction": "not_run",
+          "level4_final_task": "not_run",
+          "baseline_choice": "nvdiffrec (DMTet/FlexiCubes + nvdiffrast); reuses the existing renderer and adds the surface parameterisation/regularisation Step 0.1 identified as missing"
+        },
+        "evidence": {
+          "doc_section": "docs/experiments/72H_GEOMETRY.md #12.7",
+          "summary": "outputs/step0_1_20261105_final2/summary.json",
+          "summary_sha256_16": "34ceb8304b1d74ec",
+          "log": "logs/step0_1_20261105_final2.log",
+          "superseded": [
+            "outputs/step0_1_20261105_r2/summary.json",
+            "outputs/step0_1_20261105_final/summary.json"
+          ]
+        },
+        "resource": {
+          "effective_runs": 202,
+          "invalid_runs": 0,
+          "views": 16,
+          "resolution": 256,
+          "compute_seconds": 144.6,
+          "wall_seconds": 153,
+          "peak_torch_mib": 856.8
+        }
+      },
       "arms": {
         "A": "Omega TSDF -> ExMesh",
         "B": "Omega TSDF -> Mesh Splatting",
