@@ -225,11 +225,11 @@ def prepare(config, only):
                     fuse_initial(config, case, json.loads(record.read_text()), reference)
 
 
-def m2_command(config, name, mesh, target, calibration):
+def m2_command(config, name, mesh, target, calibration, omega=None):
     optimizer = config["optimizer"]
     init = json.loads((Path(config["out"])/"initialization.json").read_text())
     command = [sys.executable, "scripts/m2_anchor_opt.py", "--mesh", str(mesh), "--out", str(target),
-               "--omega", str(Path(config["rgb_run"])/"geometry/omega"),
+               "--omega", str(omega or (Path(config["rgb_run"])/"geometry/omega")),
                "--gt", str(Path(config["master"])/"geometry"/f"gt_ray{config['observation_resolution']}"),
                "--camera-mode", "diagnostic", "--resolution", str(config["observation_resolution"]),
                "--voxel-size", str(init["voxel_source"]), "--iters", str(optimizer["iters"]),
@@ -413,6 +413,66 @@ def collect(config):
     print(json.dumps({"rows": len(rows), "positions": list(summary)}, indent=2), flush=True)
 
 
+def landmarks(config):
+    """Smallest resolvable error, largest error that still meets the frozen
+    criteria, and the plateau position, per curve."""
+    summary = json.loads((out_root(config)/"external"/"summary.json").read_text())
+    criteria = config["r1"]["criteria"]
+    depth = json.loads((out_root(config)/"external"/"equivalence.json").read_text())["mean_observed_depth_mm"]
+    curves = summary["groups"]
+    table = {}
+    for position, records in curves.items():
+        for record in records:
+            channel = f"{position}/{record['family']}/{record['distribution']}"
+            level = record["translation_mm"] if record["family"] == "translation" else record["rotation_deg"]
+            entry = table.setdefault(channel, {"position": position, "family": record["family"],
+                                               "distribution": record["distribution"], "levels": []})
+            entry["levels"].append({
+                "level": level,
+                "equivalent_lateral_mm": float(np.sin(np.deg2rad(level))*depth) if record["family"] == "rotation"
+                else level,
+                "chamfer_mean": record["chamfer_observed_mm_mean"],
+                "chamfer_std": record["chamfer_observed_mm_std"],
+                "chamfer_delta": record["delta_chamfer_observed_mm"],
+                "chamfer_floor": record["floor_chamfer_observed_mm"],
+                "resolvable": bool(record["delta_chamfer_observed_mm"] > record["floor_chamfer_observed_mm"]),
+                "f_mean": record["observed_fscore@1mm_mean"],
+                "recall_mean": record["recall@1mm_mean"],
+                "normal_mean": record["normal_deg_mean"],
+                "normal_flat": record["normal_flat_deg_mean"],
+                "normal_edge": record["normal_edge_deg_mean"],
+                "hole_fill": record["hole_fill_mean"],
+                "thin_recall": record["thin_recall@1mm_mean"],
+                "p90": record["observed_p90_mm_mean"], "p99": record["observed_p99_mm_mean"],
+                "camera_rpe_translation_mm": record["camera_rpe_translation_mm_mean"],
+                "camera_rpe_rotation_deg": record["camera_rpe_rotation_deg_mean"],
+                "meets_criteria": bool(
+                    record["chamfer_observed_mm_mean"] <= criteria["chamfer_max_mm"]
+                    and record["observed_fscore@1mm_mean"] >= criteria["observed_f_min"]
+                    and record["recall@1mm_mean"] >= criteria["recall_min"]
+                    and record["normal_deg_mean"] <= criteria["normal_max_deg"]
+                    and abs(record["hole_fill_mean"]-summary["zero_control"]["hole_fill"]["mean"])
+                    <= criteria["hole_fill_abs"]
+                    and abs(record["thin_recall@1mm_mean"]-summary["zero_control"]["thin_recall@1mm"]["mean"])
+                    <= criteria["thin_recall_abs"])})
+            entry["levels"].sort(key=lambda row: row["level"])
+        for channel, entry in table.items():
+            levels = entry["levels"]
+            resolvable = [row["level"] for row in levels if row["resolvable"]]
+            passing = [row["level"] for row in levels if row["meets_criteria"]]
+            entry["resolvable_from"] = min(resolvable) if resolvable else None
+            entry["passes_up_to"] = max(passing) if passing else None
+            first, second = levels[0], levels[-1]
+            slope = (second["chamfer_mean"]-first["chamfer_mean"])/(second["level"]-first["level"])
+            entry["plateau_from"] = None
+            for previous, current in zip(levels, levels[1:]):
+                local = (current["chamfer_mean"]-previous["chamfer_mean"])/(current["level"]-previous["level"])
+                entry["plateau_from"] = current["level"] if local < .2*max(slope, 1e-9) else None
+                if entry["plateau_from"]:
+                    break
+    (out_root(config)/"external"/"landmarks.json").write_text(json.dumps(table, indent=2)+"\n")
+
+
 def observed_depth(config):
     master = Path(config["master"])
     scale = json.loads((master/"scale.json").read_text())["mm_per_source_unit"]
@@ -442,6 +502,7 @@ def main():
         evaluate(config)
     if args.phase in ("collect", "all"):
         collect(config)
+        landmarks(config)
 
 
 if __name__ == "__main__":

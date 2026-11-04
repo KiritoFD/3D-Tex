@@ -49,6 +49,15 @@
   "r1": {
     "out": "outputs/measurement_error_v2/r1",
     "zero_control": "outputs/measurement_error_v2/repeatability/zero_v2",
+    "criteria": {
+      "chamfer_max_mm": 1.1879,
+      "observed_f_min": 0.5994,
+      "recall_min": 0.2674,
+      "normal_max_deg": 53.177,
+      "hole_fill_abs": 0.0705,
+      "thin_recall_abs": 0.0323,
+      "note": "frozen from the R0 baseline before any R1 sweep (1.10x, 0.95x, absolute 0.02, +2 deg, 2b)"
+    },
     "external": {
       "translation_mm": [0.0, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0],
       "rotation_deg": [0.0, 0.02, 0.05, 0.1, 0.2, 0.5],

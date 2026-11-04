@@ -232,10 +232,176 @@ def collect(config):
     print(json.dumps({"rows": len(rows), "groups": {k: len(v) for k, v in groups.items()}}, indent=2), flush=True)
 
 
+def half_diagonal(size):
+    return float(np.sqrt(2)*size/2.)
+
+
+def k1_for_corner_px(size, px):
+    """Brown-Conrady k1 whose corner deviation is exactly `px` pixels."""
+    return px/half_diagonal(size)
+
+
+def radial_scale(r, k1):
+    return r*(1.+k1*r*r)
+
+
+def inverse_scale(rd, k1, iterations=6):
+    r = rd.copy()
+    for _ in range(iterations):
+        slope = 1.+3.*k1*r*r
+        r = r-(r*(1.+k1*r*r)-rd)/np.where(np.abs(slope) > 1e-6, slope, 1e-6)
+    return np.maximum(r, 0.)
+
+
+def lens_maps(size, k1, forward):
+    yy, xx = np.indices((size, size), dtype=np.float64)
+    centre, radius = (size-1)/2., half_diagonal(size)
+    xn, yn = (xx-centre)/radius, (yy-centre)/radius
+    r = np.hypot(xn, yn)
+    scaled = radial_scale(r, k1) if forward else inverse_scale(r, k1)
+    ratio = np.where(r > 1e-9, scaled/np.where(r > 1e-9, r, 1.), 1.)
+    return (centre+radius*ratio*xn).astype(np.float32), (centre+radius*ratio*yn).astype(np.float32)
+
+
+def warp_lens(rgba, k1, forward):
+    import cv2
+    u, v = lens_maps(rgba.shape[0], k1, forward)
+    return cv2.remap(rgba, u, v, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT,
+                     borderValue=(255, 255, 255, 0))
+
+
+def lens_names(config):
+    return [f"{mode}{level:g}px" for level in spec(config)["distortion_px"] if level > 0
+            for mode in ("raw", "fix")]
+
+
+def lens_prepare(config, only):
+    import shutil
+    from PIL import Image
+    zero = Path(config["rgb_run"])
+    root = out_root(config)/"lens"
+    size = int(config["model_resolution"])
+    order = sorted(path.name for path in (zero/"images").iterdir() if path.suffix.lower() == ".png")
+    catalog, roundtrip = [], {}
+    for level in spec(config)["distortion_px"]:
+        if level == 0:
+            continue
+        k1 = k1_for_corner_px(size, level)
+        for mode in ("raw", "fix"):
+            name = f"{mode}{level:g}px"
+            if only and name not in only:
+                continue
+            scene = root/name
+            (scene/"images").mkdir(parents=True, exist_ok=True)
+            (scene/"masks").mkdir(exist_ok=True)
+            if not (scene/"geometry"/"gt").exists():
+                (scene/"geometry").mkdir(parents=True, exist_ok=True)
+                shutil.copytree(zero/"geometry"/"gt", scene/"geometry"/"gt")
+            shutil.copy(zero/"rig.json", scene/"rig.json")
+            hashes = {}
+            for filename in order:
+                ideal = np.asarray(Image.open(zero/"images"/filename).convert("RGBA"), dtype=np.float32)
+                if mode == "raw":
+                    warped = warp_lens(ideal, k1, forward=False)
+                else:
+                    warped = warp_lens(warp_lens(ideal, k1, forward=False), k1, forward=True)
+                Image.fromarray(np.rint(warped[..., :3]).clip(0, 255).astype(np.uint8)).save(
+                    scene/"images"/filename)
+                alpha = warped[..., 3]
+                Image.fromarray((alpha > 127.5).astype(np.uint8)*255).save(scene/"masks"/filename)
+                hashes[filename] = __import__("hashlib").sha256(
+                    (scene/"images"/filename).read_bytes()).hexdigest()
+            (scene/"perturbation.json").write_text(json.dumps({
+                "mode": "lens_distortion", "target_corner_px": level, "k1": k1,
+                "correction": "none" if mode == "raw" else "true_k1",
+                "input_order": order, "input_sha256": hashes, "seed": 0,
+                "definition": "Brown-Conrady radial warp of the frozen ideal pinhole render; "
+                              "px is the maximum reprojection deviation at the image corner"}, indent=2)+"\n")
+            catalog.append({"name": name, "scene": scene.as_posix(), "mode": mode,
+                            "target_corner_px": level, "k1": k1, "seed": 0})
+            print("Lens scene", name, flush=True)
+        ideal = np.asarray(Image.open(zero/"images"/order[0]).convert("RGBA"), dtype=np.float32)
+        back = warp_lens(warp_lens(ideal, k1, forward=False), k1, forward=True)
+        roundtrip[f"{level:g}px"] = {"mean_abs": float(np.abs(back-ideal).mean()),
+                                     "max_abs": float(np.abs(back-ideal).max()),
+                                     "fraction_over_1_lsb": float((np.abs(back-ideal) > 1).mean())}
+    (root/"catalog_scenes.json").write_text(json.dumps(catalog, indent=2)+"\n")
+    (root/"roundtrip.json").write_text(json.dumps(roundtrip, indent=2)+"\n")
+    config_lens = dict(config, rgb_sweep={"root": str(root), "min_free_commit_gib": 3.0})
+    (root/"rgb_config.json").write_text(json.dumps(config_lens, indent=2)+"\n")
+
+
+def lens_run(config, only):
+    from measurement_error.external import gpu_free_gib, m2_command
+    root = out_root(config)/"lens"
+    catalog = json.loads((root/"catalog_scenes.json").read_text())
+    for entry in catalog:
+        if only and entry["name"] not in only:
+            continue
+        scene = Path(entry["scene"])
+        for phase in ("infer", "fuse"):
+            if phase == "infer" and (scene/"geometry"/"omega"/"cameras.json").exists():
+                continue
+            subprocess.run([sys.executable, "scripts/measurement_error/rgb/run.py", "--config",
+                            str(root/"rgb_config.json"), "--phase", phase, "--only", entry["name"]],
+                           cwd=ROOT, check=True)
+        total, free, used = gpu_free_gib()
+        if free < 2.0:
+            raise SystemExit(f"GPU busy before lens {entry['name']}: {free:.2f} GiB free")
+        target = root/"m2"/entry["name"]
+        if (target/"m2_log.json").exists():
+            print("SKIP", entry["name"], flush=True)
+            continue
+        target.mkdir(parents=True, exist_ok=True)
+        command = m2_command(config, entry["name"], scene/"mesh"/"mesh_source.ply", target, None,
+                             omega=scene/"geometry"/"omega")
+        with (root/f"{entry['name']}.log").open("w") as stream:
+            subprocess.run(command, cwd=ROOT, stdout=stream, stderr=subprocess.STDOUT, check=True)
+        print("Completed lens", entry["name"], flush=True)
+
+
+def lens_evaluate(config):
+    root = out_root(config)/"lens"
+    catalog = [{"name": entry["name"], "case": None}
+               for entry in json.loads((root/"catalog_scenes.json").read_text())]
+    (root/"catalog_m2.json").write_text(json.dumps(catalog, indent=2)+"\n")
+    local = dict(config, out=str(root), root=str(root))
+    (root/"eval_config.json").write_text(json.dumps(local, indent=2)+"\n")
+    # evaluate.py expects its catalog at <root>/catalog.json
+    (root/"catalog.json").write_text(json.dumps(catalog, indent=2)+"\n")
+    subprocess.run([sys.executable, "scripts/measurement_error/evaluate.py", "--config",
+                    str(root/"eval_config.json"), "--family", "m2", "--phase", "all"], cwd=ROOT, check=True)
+
+
+def lens_collect(config):
+    from measurement_error.external import case_metrics, zero_metrics
+    root = out_root(config)/"lens"
+    zero, zero_path = zero_metrics(config)
+    levels = sorted({entry["target_corner_px"] for entry in json.loads(
+        (root/"catalog_m2.json").read_text())})
+    rows = []
+    for level in levels:
+        for mode in ("raw", "fix"):
+            folder = root/"m2_eval"/f"{mode}{level:g}px"
+            if not (folder/"distances.npz").exists():
+                continue
+            values = case_metrics(folder)
+            rows.append(dict(values, mode=mode, corner_px=level,
+                             chamfer_ratio=values["chamfer_observed_mm"]/zero["chamfer_observed_mm"]["mean"],
+                             fscore_ratio=values["observed_fscore@1mm"]/zero["observed_fscore@1mm"]["mean"]))
+    (root/"summary.json").write_text(json.dumps({"zero_control": zero, "zero_control_source": str(zero_path),
+        "roundtrip": json.loads((root/"roundtrip.json").read_text()), "rows": rows,
+        "note": "raw = distorted photos treated as pinhole (no correction); fix = undistorted with the true k1"},
+        indent=2)+"\n")
+    print(json.dumps({"lens_rows": len(rows)}, indent=2), flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="configs/experiments/measurement_error_v2.json")
-    parser.add_argument("--phase", choices=["prepare", "run", "evaluate", "collect", "all"], required=True)
+    parser.add_argument("--phase", required=True,
+                        choices=["prepare", "run", "evaluate", "collect", "all",
+                                 "lens_prepare", "lens_run", "lens_evaluate", "lens_collect"])
     parser.add_argument("--only")
     args = parser.parse_args()
     config = json.loads(Path(args.config).read_text())
@@ -248,6 +414,14 @@ def main():
         evaluate(config)
     if args.phase in ("collect", "all"):
         collect(config)
+    if args.phase in ("lens_prepare", "all"):
+        lens_prepare(config, only)
+    if args.phase in ("lens_run", "all"):
+        lens_run(config, only)
+    if args.phase in ("lens_evaluate", "all"):
+        lens_evaluate(config)
+    if args.phase in ("lens_collect", "all"):
+        lens_collect(config)
 
 
 if __name__ == "__main__":
