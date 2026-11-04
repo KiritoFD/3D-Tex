@@ -1,8 +1,17 @@
 {
-  "schema": "3dtex-72h-geometry-plan-v1",
+  "schema": "3dtex-72h-geometry-plan-v2",
   "created": "2026-11-04",
+  "updated": "2026-11-05",
   "timezone": "Asia/Shanghai",
-  "objective": "Single RTX 4090 geometry research: VGGT-Omega initial geometry -> trusted geometry correction -> differentiable mesh/SDF -> UV, with cross-scene evidence at every stage.",
+  "objective": "Image-driven multi-view surface reconstruction: VGGT-Omega supplies coarse cameras, scale, silhouette and initial geometry only; differentiable rendering of the original RGB optimises the surface, with material/lighting factored for glossy scenes. VGGT depth is initialisation, not a supervision target.",
+  "revision": {
+    "date": "2026-11-05",
+    "doc": "docs/experiments/72H_GEOMETRY.md sections 0 and 12",
+    "summary": "Main line changed from VGGT depth/normal correction to image-driven surface reconstruction on a VGGT-initialised coarse geometry.",
+    "removed": ["URGT", "HyDen", "A1/A2 depth-normal prior correction", "VGGT depth as supervision target"],
+    "kept_unchanged": ["phase2_protocol", "phase2_results", "phase3_results measurements and verdicts"],
+    "history_status": "phase1 retained; phases P2-P6 and the phase3 ladder marked superseded"
+  },
   "hardware": {
     "remote": "ssh 4090",
     "gpu": "NVIDIA GeForce RTX 4090, 24564 MiB",
@@ -10,19 +19,25 @@
     "resource_policy": "long runs in tmux with logs on disk; do not kill other users' jobs; prefer microbatch/resolution reduction before deep tuning"
   },
   "priorities": [
-    "cross-scene baseline",
-    "VGGT geometry correction",
-    "ExMesh improvements",
-    "Mesh Splatting"
+    "image-driven surface reconstruction (Stage 1)",
+    "Mesh Splatting (ICLR 2026)",
+    "nvdiffrec / FlexiCubes",
+    "ExMesh explicit refinement + adaptive remesh (Stage 2)",
+    "factored material/lighting for glossy objects"
   ],
   "non_goals": [
-    "VGGT training",
+    "VGGT training or fine-tuning",
+    "VGGT depth/normal as a supervision target",
+    "URGT / HyDen priors (main line or appendix)",
+    "additional VGGT depth-supervision models",
+    "strong VGGT depth loss inside Stage 2",
     "full DTU download",
     "capture-accuracy R1/R2 parameter sweep"
   ],
   "phases": [
     {
       "id": "P1",
+      "status": "completed_retained",
       "hours": [0, 6],
       "name": "environment, migration, reproducibility floor",
       "deliverables": [
@@ -41,6 +56,7 @@
     },
     {
       "id": "P2",
+      "status": "superseded_2026_11_05_results_kept",
       "hours": [6, 18],
       "name": "cross-scene baselines and unified evaluation",
       "scenes": ["Lego", "ETH3D pipes", "ETH3D relief", "ETH3D kicker"],
@@ -52,23 +68,25 @@
     },
     {
       "id": "P3",
+      "status": "superseded_2026_11_05_results_kept",
       "hours": [18, 34],
       "name": "VGGT geometry correction ladder",
       "arms": {
         "G0": "raw TSDF",
         "G1": "M2 lattice 4-8",
-        "G2": "G1 + normal consistency + edge protection",
-        "G3": "URGT small-scale high-resolution local normal correction (Lego, relief, 2-4 prior views)"
+        "G2": "G1 + normal consistency + edge protection"
       }
     },
     {
       "id": "P4",
+      "status": "superseded_2026_11_05_redefined_by_plan_2026_11_05",
       "hours": [34, 54],
       "name": "ExMesh E0-E3 ablation",
       "arms": "E0-E3; separate initialization quality from optimization supervision; Lego first, then relief"
     },
     {
       "id": "P5",
+      "status": "superseded_2026_11_05_redefined_by_plan_2026_11_05",
       "hours": [54, 64],
       "name": "Mesh Splatting",
       "pipeline": "DMTet -> softening -> remeshing -> export; one scene first; stop-loss to ExMesh split/merge on overrun",
@@ -76,6 +94,7 @@
     },
     {
       "id": "P6",
+      "status": "superseded_2026_11_05_redefined_by_plan_2026_11_05",
       "hours": [64, 72],
       "name": "final cross-scene validation",
       "deliverables": [
@@ -285,7 +304,8 @@
                 "peak_delta_mib": 768, "sps_iters": 4.9},
       "g2_l4_rep2": {"chamfer": 0.009982, "f1": 0.7055, "normal_deg": 48.68, "sharp_recall": 0.6765},
       "g3_proxy": {"chamfer": 0.011875, "f1": 0.5989, "normal_deg": 49.13, "sharp_recall": 0.5993,
-                   "peak_delta_mib": 832, "sps_iters": 14.9, "note": "local proxy, URGT unavailable"}
+                   "peak_delta_mib": 832, "sps_iters": 14.9,
+                   "note": "local normal-correction proxy; arm discontinued 2026-11-05"}
     },
     "gates": {
       "calibration_protocol_reliable": true,
@@ -300,9 +320,61 @@
     "invalid_runs": [
       "calibration kicker attempt 1: pre-Sim3 mesh bbox -> empty ROI -> percentile crash; fixed",
       "evaluate.py with >2 meshes: Blender exits after ~2 cases on 2M-triangle source; re-ran per mesh",
-      "URGT body: no code/weights locally or on remote; only a labelled high-res normal-correction proxy ran"
+      "G3 normal-correction proxy: no upstream code or weights; only the labelled high-res proxy ran (arm discontinued 2026-11-05)"
     ],
     "phase4": "E0 may start; E1-E3 blocked by background-shell suppression and ETH3D visibility protocol"
+  },
+  "plan_2026_11_05": {
+    "date": "2026-11-05",
+    "doc": "docs/experiments/72H_GEOMETRY.md section 12",
+    "goal": "Recover accurate surfaces from multi-view RGB by differentiable rendering, starting from VGGT-Omega coarse geometry; VGGT is initialisation, not supervision.",
+    "removed_from_all_plans": ["URGT", "HyDen", "A1/A2 depth-normal prior correction", "VGGT depth/normal as a supervision target"],
+    "stages": {
+      "stage1_surface_recovery": {
+        "methods": ["nvdiffrec / FlexiCubes (SDF, DMTet)", "Mesh Splatting (ICLR 2026, multi-layer softening + remeshing)"],
+        "loss": "lambda_s silhouette + lambda_c correspondence + lambda_r render + lambda_g geometry",
+        "topology": "allowed; wrong triangles may be removed and rebuilt",
+        "not_done": ["UV", "triangle-count minimisation", "VGGT depth supervision"]
+      },
+      "stage2_explicit_refinement": {
+        "methods": ["ExMesh", "adaptive remeshing", "normal refinement", "UV and texture baking"],
+        "input": "stage-1 surface + original RGB",
+        "forbidden": "strong VGGT depth loss (would pull the corrected geometry back)"
+      },
+      "appearance": "Factored-NeuS-style material/lighting decomposition for glossy objects; otherwise the RGB loss explains geometry error away"
+    },
+    "stage1_experiments": {
+      "scene": "Lego nerf_lego16",
+      "fixed": ["Omega cameras (no pose re-estimation)", "the same 16 RGB views", "initialisation source", "evaluation script"],
+      "step0_objective_validity": {
+        "run_before": "arms A/B/C",
+        "0a_appearance_fit": "fix GT Mesh and VGGT Mesh separately, optimise constrained appearance only on 16 train views, evaluate on 4 heldout; the GT mesh must render clearly better on heldout",
+        "0b_known_perturbation": "perturb the GT mesh by +/-0.5/1/2 voxel along normals, smoothing and hole filling, then optimise geometry; gradient direction agreement >=80% with monotone error decrease",
+        "0c_gloss_diagnostic": "if highlight regions give reversed gradients the appearance model fails; material/lighting decomposition is then mandatory",
+        "gate": "A/B/C do not start until 0a and 0b pass; thresholds are frozen after Step 0"
+      },
+      "arms": {
+        "A": "Omega TSDF -> ExMesh",
+        "B": "Omega TSDF -> Mesh Splatting",
+        "C": "Omega SDF -> nvdiffrec / FlexiCubes"
+      },
+      "per_run_record": ["batch (views)", "peak VRAM", "sps", "gate verdict", "log path"]
+    },
+    "acceptance": {
+      "protocol": "phase2_protocol unchanged (same P0 voxel, train-only Sim(3), 50k sampling); historical numbers untouched",
+      "f1_at_1_voxel_min": 0.75,
+      "normal_mean_deg_max": 50.44,
+      "sharp_recall_min": 0.694,
+      "holes_and_thin_structures": "visible quality must improve",
+      "heldout_render": "must not regress (held-out protocol still to be added)",
+      "resources": "<=30 min per arm, nvidia-smi peak delta <=10 GB, run record complete",
+      "note": "0.75 is above the M2 floor 0.7365; a miss is recorded as a negative result, no post-hoc tuning"
+    },
+    "history": {
+      "superseded": ["P2-P6 schedule", "phase3 G1/G2/G3 ladder", "A1/A2 depth-normal correction"],
+      "kept": ["phase1 environment and baseline numbers", "phase2 frozen protocol and results", "phase3 measurements and verdicts"],
+      "use_of_old_results": "phase-3 conclusions only document that the VGGT-depth-prior direction is closed"
+    }
   },
   "artifacts": {
     "doc": "docs/experiments/72H_GEOMETRY.md",
