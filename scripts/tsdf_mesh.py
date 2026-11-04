@@ -199,6 +199,8 @@ def main() -> None:
     parser.add_argument("--filtered", default=None, help="default <scene>/geometry/filtered")
     parser.add_argument("--roi-geometry", default=None,
                         help="derive bounds from these input depths, while fusing --filtered")
+    parser.add_argument("--grid-json", default=None,
+                        help="fuse on a frozen grid instead of deriving one (keys origin/voxel/shape)")
     parser.add_argument("--out", default=None, help="default <scene>/mesh")
     parser.add_argument("--voxel-div", type=int, default=256)
     parser.add_argument("--trunc-voxels", type=float, default=4.0)
@@ -239,21 +241,31 @@ def main() -> None:
 
     roi_frames = frames if args.roi_geometry is None else [
         load_frame(c, Path(args.roi_geometry), scene) for c in cameras]
-    clouds = []
-    for frame in roi_frames:
-        rr, cc = np.nonzero((frame["depth"] > near) & (frame["depth"] < far))
-        if len(rr):
-            clouds.append(unproject(frame, rr, cc))
-    pts = np.concatenate(clouds)
-    lo, hi = pts.min(axis=0), pts.max(axis=0)
-    diagonal = float(np.linalg.norm(hi - lo))
-    voxel = diagonal / args.voxel_div
-    sdf_trunc = voxel * args.trunc_voxels
-    lo -= sdf_trunc * 2
-    hi += sdf_trunc * 2
-    shape = tuple(np.ceil((hi - lo) / voxel).astype(int))
-    print(f"[roi] {len(pts)} pts, diag {diagonal:.4f} -> voxel {voxel:.5f}, trunc {sdf_trunc:.5f}, "
-          f"grid {list(shape)} ({np.prod(shape) / 1e6:.2f}M voxels)")
+    if args.grid_json:
+        frozen = json.loads(Path(args.grid_json).read_text())
+        lo = np.asarray(frozen["origin"], dtype=np.float64)
+        voxel = float(frozen["voxel"])
+        shape = tuple(int(v) for v in frozen["shape"])
+        sdf_trunc = voxel * args.trunc_voxels
+        diagonal = float(np.linalg.norm(np.asarray([shape]) * voxel))
+        print(f"[grid] frozen {args.grid_json} -> voxel {voxel:.5f}, trunc {sdf_trunc:.5f}, "
+              f"grid {list(shape)}")
+    else:
+        clouds = []
+        for frame in roi_frames:
+            rr, cc = np.nonzero((frame["depth"] > near) & (frame["depth"] < far))
+            if len(rr):
+                clouds.append(unproject(frame, rr, cc))
+        pts = np.concatenate(clouds)
+        lo, hi = pts.min(axis=0), pts.max(axis=0)
+        diagonal = float(np.linalg.norm(hi - lo))
+        voxel = diagonal / args.voxel_div
+        sdf_trunc = voxel * args.trunc_voxels
+        lo -= sdf_trunc * 2
+        hi += sdf_trunc * 2
+        shape = tuple(np.ceil((hi - lo) / voxel).astype(int))
+        print(f"[roi] {len(pts)} pts, diag {diagonal:.4f} -> voxel {voxel:.5f}, trunc {sdf_trunc:.5f}, "
+              f"grid {list(shape)} ({np.prod(shape) / 1e6:.2f}M voxels)")
 
     start = time.time()
     tsdf, colour, weight = fuse(lo, voxel, shape, sdf_trunc, frames, near, far, confs,
@@ -284,7 +296,8 @@ def main() -> None:
         "triangles": int(len(faces)), "boundary_edges": int((counts == 1).sum()),
         "nonmanifold_edges": int((counts > 2).sum()),
         "bbox_min": np.round(verts.min(0), 4).tolist(), "bbox_max": np.round(verts.max(0), 4).tolist(),
-        "voxel": round(voxel, 6), "sdf_trunc": round(sdf_trunc, 6), "diagonal": round(diagonal, 4),
+        "origin": np.round(lo, 6).tolist(), "shape": [int(v) for v in shape],
+        "voxel": float(voxel), "sdf_trunc": float(sdf_trunc), "diagonal": round(diagonal, 4),
         "voxels_observed": int(observed.sum()), "depth_near": round(near, 4),
         "depth_far": round(far, 4), "weight_mode": args.weight_mode,
         "sample_mode": args.sample_mode, "robust": bool(args.robust),
