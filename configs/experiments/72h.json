@@ -1,0 +1,314 @@
+{
+  "schema": "3dtex-72h-geometry-plan-v1",
+  "created": "2026-11-04",
+  "timezone": "Asia/Shanghai",
+  "objective": "Single RTX 4090 geometry research: VGGT-Omega initial geometry -> trusted geometry correction -> differentiable mesh/SDF -> UV, with cross-scene evidence at every stage.",
+  "hardware": {
+    "remote": "ssh 4090",
+    "gpu": "NVIDIA GeForce RTX 4090, 24564 MiB",
+    "training_policy": "no VGGT-Omega training or fine-tuning under any circumstance",
+    "resource_policy": "long runs in tmux with logs on disk; do not kill other users' jobs; prefer microbatch/resolution reduction before deep tuning"
+  },
+  "priorities": [
+    "cross-scene baseline",
+    "VGGT geometry correction",
+    "ExMesh improvements",
+    "Mesh Splatting"
+  ],
+  "non_goals": [
+    "VGGT training",
+    "full DTU download",
+    "capture-accuracy R1/R2 parameter sweep"
+  ],
+  "phases": [
+    {
+      "id": "P1",
+      "hours": [0, 6],
+      "name": "environment, migration, reproducibility floor",
+      "deliverables": [
+        "docs/experiments/72H_GEOMETRY.md",
+        "configs/experiments/72h.json",
+        "outputs/72h/"
+      ],
+      "gates": {
+        "vggt_inference_valid": "checkpoint sha256 matches; 16-view export contract complete",
+        "vram_64_views_under_24gb": true,
+        "lego_baseline_f1_min": 0.62,
+        "m2_repeat_chamfer_cv_max": 0.01,
+        "m2_repeat_f1_std_max": 0.005,
+        "repeats_min": 10
+      }
+    },
+    {
+      "id": "P2",
+      "hours": [6, 18],
+      "name": "cross-scene baselines and unified evaluation",
+      "scenes": ["Lego", "ETH3D pipes", "ETH3D relief", "ETH3D kicker"],
+      "baselines": [
+        "raw VGGT -> TSDF",
+        "trusted-confidence fusion + carving"
+      ],
+      "note": "ETH3D is internal geometry evaluation until the official visibility protocol is implemented."
+    },
+    {
+      "id": "P3",
+      "hours": [18, 34],
+      "name": "VGGT geometry correction ladder",
+      "arms": {
+        "G0": "raw TSDF",
+        "G1": "M2 lattice 4-8",
+        "G2": "G1 + normal consistency + edge protection",
+        "G3": "URGT small-scale high-resolution local normal correction (Lego, relief, 2-4 prior views)"
+      }
+    },
+    {
+      "id": "P4",
+      "hours": [34, 54],
+      "name": "ExMesh E0-E3 ablation",
+      "arms": "E0-E3; separate initialization quality from optimization supervision; Lego first, then relief"
+    },
+    {
+      "id": "P5",
+      "hours": [54, 64],
+      "name": "Mesh Splatting",
+      "pipeline": "DMTet -> softening -> remeshing -> export; one scene first; stop-loss to ExMesh split/merge on overrun",
+      "deferred_deps": ["tinycudann", "torch_scatter"]
+    },
+    {
+      "id": "P6",
+      "hours": [64, 72],
+      "name": "final cross-scene validation",
+      "deliverables": [
+        "per-scene/per-method summary table",
+        "fixed-view side-by-side renders"
+      ]
+    }
+  ],
+  "phase1": {
+    "status": "passed",
+    "git_sha": "851065bdfb258499f1af220fa2ba0c594733fb2a",
+    "remote_root": "/root/3dtex",
+    "env": {
+      "name": "3dtex",
+      "python": "3.11",
+      "torch": "2.6.0+cu124",
+      "torchvision": "0.21.0",
+      "cuda_toolkit": "/opt/conda/envs/nvcc124 (CUDA 12.4, gcc 9.5)",
+      "nvdiffrast": "source build, raster verified",
+      "pytorch3d": "source build 0.7.9; quaternion_to_matrix CUDA forward verified",
+      "exmesh_extensions": "simple-knn and diff-plane-rasterization built; build_rotation quaternion forward verified",
+      "blender": "/root/deps/blender/blender-3.3.9-linux-x64/blender"
+    },
+    "inputs": {
+      "checkpoint": "data/.cache/models/sanqilu376/VGGT-Omega/vggt_omega_1b_512.pt",
+      "checkpoint_sha256_16": "c02da418b18bb01d",
+      "lego_images": "data/scenes/nerf_lego16/images",
+      "lego_omega": "data/scenes/nerf_lego16/geometry/omega",
+      "lego_gt": "data/scenes/nerf_lego_gt16/geometry/gt",
+      "m2_init_mesh": "outputs/geometry_pruning/eval_carve_v35c30_conf/carve_v35c30/mesh.ply",
+      "m2_init_mesh_sha256_16": "ecf994efd40a5d9c",
+      "p0_grid": "deliverables/lego_p0/ablation_report.json",
+      "source_edge_flags": "outputs/lego_source_edge_flags.npy"
+    },
+    "primary_metric": "F-score at 1 voxel, observed GT depth points, frozen 0.01150144350298549 m grid",
+    "commands": {
+      "vggt": "python scripts/adapters/vggt_omega_geometry.py --scene-dir <scene> --checkpoint <ckpt> --out <out> --device cuda --aggregator-dtype bfloat16 --image-resolution 512",
+      "m2": "python scripts/m2_anchor_opt.py --mesh <init> --omega data/scenes/nerf_lego16/geometry/omega --gt data/scenes/nerf_lego_gt16/geometry/gt --camera-mode diagnostic --resolution 256 --iters 300 --lr 0.05 --voxel-size 0.01150144350298549 --lambda-prior 0.1 --tolerance-voxels 1.0 --seed 20261103 --out <out>",
+      "evaluate": "python scripts/mesh_opt/evaluate.py --out <out> --blender <blender> --meshes name=mesh.ply ..."
+    },
+    "ssh_recovery_probe": {
+      "time": "2026-11-04 22:22:53 +08:00",
+      "endpoint": "10.176.54.17:36430",
+      "port_open": true,
+      "ssh_ok": true,
+      "hostname": "7a9405e8fb76"
+    },
+    "peak_sampling": {
+      "method": "external nvidia-smi memory.used polling every 30 ms; peak minus idle; per-process query unsupported in container",
+      "idle_mib": 1721,
+      "vggt16_peak_used_mib": 8269,
+      "vggt16_delta_mib": 6548,
+      "vggt16_torch_peak_mib": 3993.3,
+      "vggt16_repeats": 2,
+      "prune_peak_used_mib": 2339,
+      "prune_delta_mib": 618
+    }
+  },
+  "phase2_protocol": {
+    "frozen": "2026-11-04",
+    "status": "executed 2026-11-04; overall gate FAIL (see phase2_results)",
+    "scenes": [
+      {"scene": "Lego", "dir": "data/scenes/nerf_lego16", "train_views": 16, "heldout_views": 0,
+       "gt": "rendered observed GT depth from the same 16 views", "label": "internal_p0"},
+      {"scene": "ETH3D pipes", "dir": "data/scenes/eth3d_pipes", "train_views": 12, "heldout_views": 2,
+       "gt": "ground_truth/scan_eval laser scan", "label": "internal_geometry_eval"},
+      {"scene": "ETH3D relief", "dir": "data/scenes/eth3d_relief", "train_views": 25, "heldout_views": 6,
+       "gt": "ground_truth/scan_eval laser scan", "label": "internal_geometry_eval"},
+      {"scene": "ETH3D kicker", "dir": "data/scenes/eth3d_kicker", "train_views": 25, "heldout_views": 6,
+       "gt": "ground_truth/scan_eval laser scan", "label": "internal_geometry_eval"}
+    ],
+    "eth3d_views_total": {"reconstruction": 62, "heldout_reserved": 14},
+    "heldout_policy": "heldout images never enter VGGT, TSDF, mesh optimisation or geometry metrics; reserved for phase 6 appearance",
+    "gt_isolation": "GT cameras, scan, rendered depth and foreground masks are read only by evaluation; reconstruction inputs limited to dataset images and VGGT outputs",
+    "arms": {
+      "B0": "raw VGGT depth/confidence -> train-only Sim(3) -> TSDF uniform weights, nearest sampling, no filter, no carving (no GT)",
+      "B1": "consistency_filter (no masks, tau_abs=1% camera span, tau_rel=0.05, min_agree=2, no confidence cut) -> confidence-weighted TSDF, nearest (no GT)",
+      "B1_legacy": "Lego v35c30 free-space carving with GT foreground masks + confidence fusion; diagnostic only, GT-assisted, excluded from cross-scene gates"
+    },
+    "p0_grid": {
+      "lego": {
+        "reuse": "deliverables/lego_p0",
+        "voxel": 0.01150144350298549,
+        "origin": [-0.7297994798693271, -1.2320406083074635, -0.43665042425509004],
+        "shape": [127, 215, 134],
+        "truncation": 0.04600577401194196,
+        "rule": "assert frozen values for B0/B1/B1_legacy; never recompute"
+      },
+      "eth3d": {
+        "source": "B0 raw VGGT depth only",
+        "derive": "tsdf_mesh --roi-geometry <B0 omega> --voxel-div 256 --trunc-voxels 4",
+        "record": "outputs/72h/p0_grids.json {scene,voxel,truncation,origin,shape,roi_geometry_sha256,b0_mesh_sha256}",
+        "reuse_rule": "B1 and all phase-3 G arms pass --roi-geometry <B0 omega>; voxel/shape mismatch invalidates the run",
+        "forbidden": "no GT-derived grid (no GT camera bbox, no scan bbox)"
+      }
+    },
+    "metrics": {
+      "evaluator": "scripts/eval_point_metrics.py (implemented and synthetically self-tested 2026-11-04: offset 0.01 -> chamfer 0.010715; Sim(3) scale 1.3 recovered as 1.3000000000000005)",
+      "alignment": "train-only Sim(3) from predicted camera centres to GT camera centres; scale applied to depth and mesh; no per-view scale/shift",
+      "sampling": "50k fixed-seed area-weighted mesh samples; 50k fixed-seed GT samples",
+      "accuracy": "mean nearest distance mesh samples -> GT point set",
+      "completeness": "mean nearest distance GT samples -> mesh samples",
+      "chamfer": "symmetric mean of accuracy and completeness",
+      "fscore": "F1 at 1 P0 voxel and F2 at 2 voxels",
+      "threshold_units": "Lego uses the P0 voxel directly (GT gauge); ETH3D uses P0 voxel x Sim(3) scale and records scale in surface_metrics.json",
+      "lego_secondary": "Blender measure_surfaces triangle-exact metrics and normal error for phase-1 continuity",
+      "output": "outputs/72h/<scene>_<arm>/surface_metrics.json with grid and GT sample hashes"
+    },
+    "gates": {
+      "run_validity": ["VGGT manifest frames and checkpoint sha256 match, no NaN depth", "mesh exists with >1000 vertices and >0 triangles, no NaN/Inf", "voxel and shape match the frozen grid", "single scene arm <=30 min and nvidia-smi peak delta <=10 GB", "batch, peak VRAM, sps, gate verdict and log path recorded"],
+      "b1_improves_scene": "chamfer relative decrease >=2% AND f1 absolute increase >=0.005",
+      "b1_cross_scene": "improvement on >=2/3 ETH3D scenes AND on Lego",
+      "degradation_guard": "any scene with chamfer degradation >5% or f1 drop >0.02 fails the overall gate",
+      "lego_absolute_floor": "B1 chamfer <=0.0135 and F1 >=0.62 (not relaxed when GT masks are removed; failure recorded as a negative result)",
+      "eth3d_absolute": "no pre-declared absolute floor; first B0 values are descriptive baseline under the same protocol"
+    },
+    "eth3d": {
+      "internal_geometry_eval": true,
+      "official_visibility_protocol": false,
+      "downloader_dry_run": "3 scenes, 6 official URLs, ~1.30 GB compressed",
+      "allowed_download": "pipes relief kicker only",
+      "forbidden": ["DTU download", "full ETH3D download"],
+      "notes": "completeness uses the full scan without official visibility masking, so numbers are conservative and never compared with the official leaderboard"
+    }
+  },
+  "phase2_results": {
+    "date": "2026-11-04",
+    "records": "outputs/72h/phase2/run_records.json",
+    "doc_section": "docs/experiments/72H_GEOMETRY.md section 10",
+    "evaluator": {"path": "scripts/eval_point_metrics.py", "selftest": "passed"},
+    "p0_grids": {
+      "file": "outputs/72h/p0_grids.json",
+      "source": "B0 raw VGGT depth only (no GT-derived grid)",
+      "eth3d": {
+        "pipes": {"voxel": 0.028879645450190592, "shape": [256, 57, 96], "frames": 12, "b0_mesh_sha256_16": "6f2208f1fe15d751"},
+        "relief": {"voxel": 0.0457208001929814, "shape": [131, 187, 170], "frames": 25, "b0_mesh_sha256_16": "93e911999600cb1f"},
+        "kicker": {"voxel": 0.018257796759500712, "shape": [213, 60, 174], "frames": 25, "b0_mesh_sha256_16": "63277b8d35c23517"}
+      },
+      "lego": "deliverables/lego_p0 reused unchanged"
+    },
+    "runs": {
+      "lego_b0": {"frames": 16, "batch": 1, "peak_delta_mib": 6548, "sps": 16.49,
+                  "point_chamfer": 0.018928030641298707, "point_f1": 0.31923399044936945,
+                  "triangle_chamfer": 0.012640901422442737, "triangle_f1": 0.6259984669274146},
+      "lego_b1": {"frames": 16, "batch": 1, "peak_delta_mib": 0, "sps": null,
+                  "point_chamfer": 0.01876887314170989, "point_f1": 0.32973325645674206,
+                  "triangle_chamfer": 0.012654563033234251, "triangle_f1": 0.6270825908093518},
+      "pipes_b0": {"frames": 12, "batch": 1, "peak_delta_mib": 6698, "sps": 14.46,
+                   "chamfer": 0.1666317512734852, "f1": 0.1466100926430518, "completeness": 0.10396639006609823},
+      "pipes_b1": {"frames": 12, "batch": 1, "peak_delta_mib": 0, "sps": null,
+                   "chamfer": 0.3487584814957706, "f1": 0.13682686762405802, "completeness": 0.4744973714409116},
+      "relief_b0": {"frames": 25, "batch": 1, "peak_delta_mib": 7288, "sps": 17.24,
+                    "chamfer": 1.0855806148976888, "f1": 0.15349133963704703},
+      "relief_b1": {"frames": 25, "batch": 1, "peak_delta_mib": 0, "sps": null,
+                    "chamfer": 0.747219910528302, "f1": 0.21791198645184912},
+      "kicker_b0": {"frames": 25, "batch": 1, "peak_delta_mib": 7288, "sps": 17.61,
+                    "chamfer": 0.4438953830455348, "f1": 0.02239715934309809},
+      "kicker_b1": {"frames": 25, "batch": 1, "peak_delta_mib": 0, "sps": null,
+                    "chamfer": 0.41825476111586335, "f1": 0.02214483180428134}
+    },
+    "deltas_b1_vs_b0": {
+      "lego_point": {"chamfer_relative_pct": -0.8409, "f1_absolute": 0.0104993},
+      "lego_triangle": {"chamfer_relative_pct": 0.1080, "f1_absolute": 0.0010841},
+      "pipes": {"chamfer_relative_pct": 109.30, "f1_absolute": -0.0097832},
+      "relief": {"chamfer_relative_pct": -31.17, "f1_absolute": 0.0644206},
+      "kicker": {"chamfer_relative_pct": -5.775, "f1_absolute": -0.0002523}
+    },
+    "gates": {
+      "lego_absolute_floor": {"pass": true, "chamfer": 0.012654563033234251, "f1": 0.6270825908093518},
+      "lego_relative": {"pass": false, "why": "chamfer -0.84% below the 2% bar and inside the M2 repeat floor"},
+      "eth3d_improved_scenes": ["relief"],
+      "eth3d_cross_scene": {"pass": false, "why": "1/3 ETH3D improved, Lego not improved"},
+      "degradation_guard": {"pass": false, "why": "pipes chamfer +109.3%"},
+      "overall": "FAIL"
+    },
+    "invalid_runs": [
+      "relief B1 attempt 1: far derived from filtered median -> voxel 0.04536, shape [129,187,171]; GRID_MATCH assertion failed, arm deleted and re-run with B0 depth_near/depth_far",
+      "pipes attempt 1: GT concat passed str to read_ply -> AttributeError; no metrics produced, fixed by Path coercion"
+    ],
+    "phase3": "may start only as B0-controlled exploration; B1 is not a valid default arm (1/3 ETH3D, pipes degradation)"
+  },
+  "phase3_results": {
+    "date": "2026-11-04",
+    "records": "outputs/72h/phase3/run_records.json",
+    "doc_section": "docs/experiments/72H_GEOMETRY.md section 11",
+    "calibration": {
+      "script": "scripts/diagnostics/eth3d_protocol_calibration.py",
+      "changes": ["ROI", "sampling density", "threshold units"],
+      "not_changed": ["method parameters", "frozen P0 grids", "phase-2 records"],
+      "kicker": {"sampling_floor_50k_m": 0.02451, "sim3_rms_m": 0.0233, "observed_fraction": 0.1796,
+                 "b0_chamfer_roi": 0.46524, "b1_chamfer_roi": 0.43720,
+                 "verdict": "method issue: raw-VGGT background shell, 89% mesh samples >2 vox from scan"},
+      "pipes": {"sampling_floor_50k_m": 0.01800, "sim3_rms_m": 0.0073, "observed_fraction": 0.3095,
+                "b0_chamfer_roi": 0.1491, "b1_chamfer_roi": 0.3555,
+                "verdict": "method issue: B1 drops 60.6% surface area; chamfer +138%"},
+      "eth3d_f1": "not usable as a gate without official visibility masking (ROI 1-vox recall 0.015-0.031)"
+    },
+    "lego_runs": {
+      "voxel": 0.01150144350298549,
+      "m2_floor": {"chamfer": 0.009414, "chamfer_sigma": 0.000039, "f1": 0.7357, "sharp_recall": 0.7801},
+      "b0": {"chamfer": 0.0126409, "f1": 0.6260, "normal_deg": 51.203, "sharp_recall": 0.7166},
+      "g1_l4": {"chamfer": 0.0125401, "f1": 0.6292, "normal_deg": 50.182, "sharp_recall": 0.6224,
+                "peak_delta_mib": 686, "sps_iters": 9.0},
+      "g1_l8": {"chamfer": 0.012839, "f1": 0.6118, "normal_deg": 50.30, "sharp_recall": 0.5747,
+                "peak_delta_mib": 684, "sps_iters": 9.5},
+      "g2_l4": {"chamfer": 0.009966, "f1": 0.7050, "normal_deg": 48.82, "sharp_recall": 0.6812,
+                "peak_delta_mib": 768, "sps_iters": 4.9},
+      "g2_l4_rep2": {"chamfer": 0.009982, "f1": 0.7055, "normal_deg": 48.68, "sharp_recall": 0.6765},
+      "g3_proxy": {"chamfer": 0.011875, "f1": 0.5989, "normal_deg": 49.13, "sharp_recall": 0.5993,
+                   "peak_delta_mib": 832, "sps_iters": 14.9, "note": "local proxy, URGT unavailable"}
+    },
+    "gates": {
+      "calibration_protocol_reliable": true,
+      "eth3d_f1_usable": false,
+      "g1_above_noise": false,
+      "g2_above_noise_vs_b0": true,
+      "g2_beats_m2_floor": false,
+      "hard_gate_no_fscore_trade": false,
+      "g3_continue": false,
+      "overall": "FAIL: no arm beats the 4090 M2 floor (0.009414)"
+    },
+    "invalid_runs": [
+      "calibration kicker attempt 1: pre-Sim3 mesh bbox -> empty ROI -> percentile crash; fixed",
+      "evaluate.py with >2 meshes: Blender exits after ~2 cases on 2M-triangle source; re-ran per mesh",
+      "URGT body: no code/weights locally or on remote; only a labelled high-res normal-correction proxy ran"
+    ],
+    "phase4": "E0 may start; E1-E3 blocked by background-shell suppression and ETH3D visibility protocol"
+  },
+  "artifacts": {
+    "doc": "docs/experiments/72H_GEOMETRY.md",
+    "local": "outputs/72h/",
+    "remote": "/root/3dtex/outputs/72h/",
+    "logs": "outputs/72h/logs/",
+    "summary": "outputs/72h/summary.json"
+  }
+}
