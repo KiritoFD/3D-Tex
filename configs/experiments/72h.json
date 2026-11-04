@@ -351,7 +351,41 @@
         "0a_appearance_fit": "fix GT Mesh and VGGT Mesh separately, optimise constrained appearance only on 16 train views, evaluate on 4 heldout; the GT mesh must render clearly better on heldout",
         "0b_known_perturbation": "perturb the GT mesh by +/-0.5/1/2 voxel along normals, smoothing and hole filling, then optimise geometry; gradient direction agreement >=80% with monotone error decrease",
         "0c_gloss_diagnostic": "if highlight regions give reversed gradients the appearance model fails; material/lighting decomposition is then mandatory",
-        "gate": "A/B/C do not start until 0a and 0b pass; thresholds are frozen after Step 0"
+        "gate": "A/B/C do not start until 0a and 0b pass; thresholds are frozen after Step 0",
+        "status": "no_go_2026_11_05",
+        "gate_result": {
+          "0a": {
+            "pass": true,
+            "gt_heldout_psnr": 19.861,
+            "vggt_heldout_psnr": 15.632,
+            "psnr_margin_db": 4.23,
+            "rule": "GT-mesh held-out PSNR exceeds VGGT-mesh by >= 1 dB"
+          },
+          "0b": {
+            "pass": false,
+            "gt_restore_direction_ratio": [0.525, 0.592],
+            "vggt_toward_gt_voxel_ratio": [0.519, 0.535],
+            "vggt_gradient_projection_fraction": [0.0106, 0.0139],
+            "threshold": 0.80,
+            "rule": "vertex gradient direction restores the perturbation toward the reference in >= 80% of cases"
+          },
+          "0c": {
+            "pass": true,
+            "gt_highlight_cosine_mean": 0.0365,
+            "vggt_highlight_cosine_mean": 0.0380,
+            "gt_highlight_correct_ratio": 0.5238,
+            "vggt_highlight_correct_ratio": 0.5267,
+            "note": "no systematic reversal, but close to chance"
+          },
+          "overall": "no_go"
+        },
+        "blocked_arms": ["A", "B", "C"],
+        "evidence": {
+          "doc_section": "docs/experiments/72H_GEOMETRY.md #12.6",
+          "summary": "outputs/step0_20261105_r2/summary.json",
+          "log": "logs/step0_20261105_r2.log",
+          "invalid_first_pass": "outputs/step0_20261105/summary.json"
+        }
       },
       "arms": {
         "A": "Omega TSDF -> ExMesh",

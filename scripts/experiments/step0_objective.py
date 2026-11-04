@@ -439,7 +439,8 @@ def curvature_mask(mesh):
     tri = mesh["vertices"][mesh["faces"]]
     face_normal = F.normalize(torch.cross(tri[:, 1] - tri[:, 0],
                                           tri[:, 2] - tri[:, 0], dim=1), dim=1)
-    disagreement = (1 - (face_normal * mesh["normals"][mesh["faces"]]).sum(-1)).clamp(0, 2)
+    vertex_mean = mesh["normals"][mesh["faces"]].mean(dim=1)
+    disagreement = (1 - (face_normal * vertex_mean).sum(-1)).clamp(0, 2)
     crease = torch.zeros(len(mesh["vertices"]), device=mesh["vertices"].device)
     for corner in range(3):
         crease.index_add_(0, mesh["faces"][:, corner], disagreement)
