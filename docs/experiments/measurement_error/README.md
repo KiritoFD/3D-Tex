@@ -1,6 +1,7 @@
 # 毫米误差测定工具
 
-2026-11-04。当前交付是可配置工具及端到端短流程验证，**没有完整扫参结果，也不判定容忍范围**。
+2026-11-04。当前交付是可配置工具及端到端短流程验证；**全量扫参与容忍判定已完成**，
+结论、噪声地板与验收表见 [MEASUREMENT_TOLERANCE.md](../MEASUREMENT_TOLERANCE.md)。
 固定 Lego、24 个名义视角与场景尺寸。入口配置：
 [`configs/experiments/measurement_error.json`](../../../configs/experiments/measurement_error.json)。
 

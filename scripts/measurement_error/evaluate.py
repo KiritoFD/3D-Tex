@@ -64,7 +64,18 @@ def evaluate(config, family, only):
     scale = json.loads((master/"scale.json").read_text())["mm_per_source_unit"]
     raw = np.load(master/"source_mesh.npz")
     sv, sf = raw["vertices"], raw["faces"]
-    sf = sf[(np.abs(sv[sf]) < 5).all(axis=(1, 2))]
+    keep = (np.abs(sv[sf]) < 5).all(axis=(1, 2))
+    # Original index of every retained source triangle, so per-triangle flags
+    # computed on the unfiltered source mesh stay aligned after the far-plane cut.
+    original_ids = np.nonzero(keep)[0]
+    sf = sf[keep]
+    flags_path = ROOT/"outputs/lego_source_edge_flags.npy"
+    sharp = None
+    if flags_path.exists():
+        dihedral = np.load(flags_path)
+        if len(dihedral) != len(keep):
+            raise ValueError("source edge flags do not match the unfiltered source triangle count")
+        sharp = dihedral[original_ids] > config.get("source_sharp_deg", 40.0)
     def mesh_of(vertices, faces):
         return wp.Mesh(points=wp.array(vertices, dtype=wp.vec3, device=device),
                        indices=wp.array(faces.ravel(), dtype=wp.int32, device=device))
@@ -130,12 +141,23 @@ def evaluate(config, family, only):
             thin_errors.append(np.where(predicted[thin] > 0, np.abs(predicted[thin]-truth[thin])*scale, np.inf))
         target = out/entry["name"]
         target.mkdir(exist_ok=True)
-        np.savez_compressed(target/"distances.npz", accuracy_mm=accuracy, completeness_mm=completeness,
-                            observed_mm=seen, normal_deg=angles, thin_depth_error_mm=np.concatenate(thin_errors))
+        saved = {"accuracy_mm": accuracy, "completeness_mm": completeness,
+                 "observed_mm": seen, "normal_deg": angles,
+                 "thin_depth_error_mm": np.concatenate(thin_errors),
+                 "source_face_ids": original_ids[source_ids]}
+        if sharp is not None:
+            saved["normal_flat_deg"] = angles[~sharp[source_ids]]
+            saved["normal_edge_deg"] = angles[sharp[source_ids]]
+        np.savez_compressed(target/"distances.npz", **saved)
         meta = {"family": family, "case": entry["name"], "mesh_sha256": hashlib.sha256(entry["mesh"].read_bytes()).hexdigest(),
             "scan": json.loads((Path(entry["case"])/entry.get("manifest_file", "manifest.json")).read_text()) if entry["case"] else None,
             "config": config, "mm_per_source_unit": scale, "hole_fill_rate": filled/holes if holes else None,
             "hole_pixels": holes, "thin_proxy": "GT 512px medial-axis pixels with radius <=2px; not semantic rods",
+            "normal_split": None if sharp is None else {
+                "source_sharp_deg": config.get("source_sharp_deg", 40.0),
+                "definition": "nearest source triangle max dihedral above threshold counts as sharp structure",
+                "sharp_fraction_of_source": float(sharp.mean()),
+                "flat_samples": int((~sharp[source_ids]).sum()), "edge_samples": int(sharp[source_ids].sum())},
             "gpu": device.name, "warp": wp.__version__, "source_self_distance_p999_mm": float(np.quantile(floor, .999)),
             "scope": "calibrated synthetic rig; full-source and observed distances separate; no acceptance decision"}
         omega = Path(entry["case"])/"geometry/omega" if family == "rgb" else Path(config["rgb_run"])/"geometry/omega"
@@ -174,6 +196,9 @@ def table(config, family):
             row.update(status="complete", chamfer_full_mm=float((d["accuracy_mm"].mean()+d["completeness_mm"].mean())/2),
                 chamfer_observed_mm=float((d["accuracy_mm"].mean()+d["observed_mm"].mean())/2),
                 normal_deg=float(d["normal_deg"].mean()), hole_fill=meta["hole_fill_rate"])
+            if "normal_flat_deg" in d:
+                row.update(normal_flat_deg=float(d["normal_flat_deg"].mean()),
+                           normal_edge_deg=float(d["normal_edge_deg"].mean()))
             for threshold in config["fscore_thresholds_mm"]:
                 precision = float((d["accuracy_mm"] <= threshold).mean())
                 recall = float((d["completeness_mm"] <= threshold).mean())

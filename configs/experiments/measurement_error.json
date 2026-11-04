@@ -17,6 +17,7 @@
   "fscore_thresholds_mm": [0.5, 1.0, 2.0],
   "evaluation_samples": 50000,
   "evaluation_seed": 20261104,
+  "source_sharp_deg": 40.0,
   "model_resolution": 512,
   "aggregator_dtype": "bfloat16",
   "tsdf_voxel_divisor": 256,
@@ -38,6 +39,7 @@
     "resolution": 800,
     "warp_correlation_pixels": 16.0,
     "render_samples": 256,
-    "render_seed": 42
+    "render_seed": 42,
+    "min_free_commit_gib": 4.0
   }
 }

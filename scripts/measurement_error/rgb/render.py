@@ -15,6 +15,7 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--config", default="configs/experiments/measurement_error.json")
     p.add_argument("--only")
+    p.add_argument("--tile-size", type=int, default=128, help="GPU execution tile size; does not change image resolution or samples")
     p.add_argument("--limit-frames", type=int, default=0, help="component probe only; inference requires all 24")
     args = p.parse_args(sys.argv[sys.argv.index("--")+1:] if "--" in sys.argv else [])
     config = json.loads(Path(args.config).read_text())
@@ -52,6 +53,10 @@ def main():
     scene.cycles.use_animated_seed = False
     scene.cycles.use_adaptive_sampling = False
     scene.cycles.use_denoising = False
+    if args.tile_size < 1:
+        raise ValueError("tile-size must be positive")
+    scene.cycles.use_auto_tile = True
+    scene.cycles.tile_size = args.tile_size
     preferences = bpy.context.preferences.addons["cycles"].preferences
     preferences.compute_device_type = "OPTIX"
     preferences.get_devices()
@@ -96,6 +101,7 @@ def main():
                 started = time.perf_counter()
                 bpy.ops.render.render(write_still=True)
                 times[frame["file"]] = time.perf_counter()-started
+                manifest.setdefault("render_resources", {})[frame["file"]] = {"tile_size": args.tile_size}
             image = bpy.data.images.load(str(target.resolve()))
             pixels = np.array(image.pixels[:], dtype=np.float32).reshape(image.size[1], image.size[0], 4)
             if int((pixels[..., 3] > .5).sum()) < 100:

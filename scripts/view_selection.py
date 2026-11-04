@@ -433,8 +433,6 @@ def cmd_infer(args):
     np.random.seed(args.seed)
     random.seed(args.seed)
     device = pick_device(args.device)
-    if device == "cuda":
-        wait_for_vram(args.min_free_gib, args.wait_seconds, min_commit_gib=args.min_free_commit_gib)
     agg_dtype = pick_aggregator_dtype(args.aggregator_dtype, device)
     print(f"[plan] {len(paths)} frames -> {out} (device={device}, dtype={agg_dtype})", flush=True)
 
@@ -452,14 +450,27 @@ def cmd_infer(args):
     t0 = time.time()
     backbone_low_memory = agg_dtype != torch.float32
     use_autocast = (device == "cuda") and not backbone_low_memory
-    model = VGGTOmega(autocast=use_autocast).eval()
+    if device == "cuda":
+        # Build the fp32 parameters straight on the device. Constructing them on the
+        # host needs ~9 GiB commit and dies inside a later nn.Linear on a small
+        # Windows host; streaming the checkpoint straight into device tensors keeps
+        # the host peak at one 67 MiB shard.
+        wait_for_vram(args.min_free_gib, args.wait_seconds, min_commit_gib=args.min_free_commit_gib)
+        previous_device = torch.get_default_device()
+        torch.set_default_device(device)
+        try:
+            model = VGGTOmega(autocast=use_autocast).eval()
+        finally:
+            torch.set_default_device(previous_device)
+    else:
+        model = VGGTOmega(autocast=use_autocast).eval()
     if str(ROOT) not in sys.path:
         sys.path.insert(0, str(ROOT))
     from scripts.torch_stream_loader import load_state_dict_streaming
     print(f"[load] {load_state_dict_streaming(ckpt, model)} tensors copied", flush=True)
-    model = model.to(device=device)
     if backbone_low_memory:
         model.aggregator.to(dtype=agg_dtype)
+    model = model.to(device=device)
     if device == "cuda":
         torch.cuda.reset_peak_memory_stats()
     load_seconds = time.time() - t0
