@@ -72,6 +72,14 @@ def parse_args():
     parser.add_argument("--lr-color", type=float, default=0.02)
     parser.add_argument("--lr-light", type=float, default=0.01)
     parser.add_argument("--sil-weight", type=float, default=0.5)
+    parser.add_argument("--rgb-weight", type=float, default=1.0,
+                        help="weight on the photometric term; 0 disables RGB supervision")
+    parser.add_argument("--albedo-mode", choices=("grid", "fixed", "lowrank"),
+                        default="grid",
+                        help="grid: learnable 64^3 albedo; fixed: frozen albedo, only "
+                             "SH/lighting are optimised; lowrank: rank-`--color-rank` CP "
+                             "factorisation of the albedo (fewer degrees of freedom)")
+    parser.add_argument("--color-rank", type=int, default=4)
     parser.add_argument("--corr-weight", type=float, default=0.02)
     parser.add_argument("--corr-max-voxels", type=float, default=3.0)
     parser.add_argument("--corr-every", type=int, default=5)
@@ -467,6 +475,39 @@ def evaluate_views(renderer, vertices, faces, normals, albedo, params, views, re
     return {key: float(np.nanmean([item[key] for item in stats])) for key in keys}
 
 
+def build_albedo(args, device):
+    """Albedo field + the parameter list that should receive colour gradients."""
+    if args.albedo_mode == "lowrank":
+        rank = args.color_rank
+        factors = {
+            "cp_lambda": torch.nn.Parameter(
+                torch.full((rank,), 0.5 / rank, device=device)),
+            "cp_channel": torch.nn.Parameter(torch.ones(3, rank, device=device)),
+            "cp_x": torch.nn.Parameter(
+                1.0 + 0.05 * torch.randn(args.color_res, rank, device=device)),
+            "cp_y": torch.nn.Parameter(
+                1.0 + 0.05 * torch.randn(args.color_res, rank, device=device)),
+            "cp_z": torch.nn.Parameter(
+                1.0 + 0.05 * torch.randn(args.color_res, rank, device=device)),
+        }
+
+        def field():
+            grid = torch.einsum("r,cr,xr,yr,zr->cxyz", factors["cp_lambda"],
+                                factors["cp_channel"], factors["cp_x"],
+                                factors["cp_y"], factors["cp_z"])[None]
+            return grid.clamp(0.0, 1.0)
+
+        return field, list(factors.values())
+
+    shape = (1, 3, args.color_res, args.color_res, args.color_res)
+    color = torch.nn.Parameter(
+        torch.full(shape, 0.5, device=device) + 0.02 * torch.randn(shape, device=device))
+    if args.albedo_mode == "fixed":
+        color.requires_grad_(False)
+        return (lambda: color), []
+    return (lambda: color), [color]
+
+
 def main():
     args = parse_args()
     torch.manual_seed(args.seed)
@@ -492,10 +533,7 @@ def main():
 
     low, high = state["bounds"]
     cell = state["cell"]
-    color = torch.nn.Parameter(
-        torch.full((1, 3, args.color_res, args.color_res, args.color_res), 0.5,
-                   device=device) + 0.02 * torch.randn(
-            1, 3, args.color_res, args.color_res, args.color_res, device=device))
+    albedo_field, albedo_params = build_albedo(args, device)
     params = {"sh_diffuse": torch.nn.Parameter(torch.zeros(9, 3, device=device)),
               "sh_specular": torch.nn.Parameter(torch.zeros(9, 3, device=device)),
               "spec_gain": torch.nn.Parameter(torch.tensor(0.1, device=device))}
@@ -542,27 +580,32 @@ def main():
         print(f"[{args.run}] corr {json.dumps(corr_stats)}", flush=True)
 
         renderer = s0.NvdRaster()
-        optimiser = torch.optim.Adam([
+        optim_groups = [
             {"params": [state["sdf"]], "lr": args.lr_sdf},
             {"params": [state["deform"]], "lr": args.lr_deform},
             {"params": [state["weights"]], "lr": args.lr_weights},
-            {"params": [color], "lr": args.lr_color},
             {"params": [params["sh_diffuse"], params["sh_specular"], params["spec_gain"]],
              "lr": args.lr_light},
-        ])
+        ]
+        if albedo_params:
+            optim_groups.append({"params": albedo_params, "lr": args.lr_color})
+        clip_params = [state["sdf"], state["deform"], state["weights"], *albedo_params,
+                       params["sh_diffuse"], params["sh_specular"], params["spec_gain"]]
+        optimiser = torch.optim.Adam(optim_groups)
 
         corr_index = corr_target = None
         for iteration in range(args.iters):
             vertices, faces, faces_long, l_dev = extract(state)
             normals = vertex_normals(vertices, faces_long)
-            albedo = sample_color(vertices, color, low, high)
+            albedo = sample_color(vertices, albedo_field(), low, high)
             loss = vertices.sum() * 0.0
             for view in train["views"]:
                 depth, alpha, shading_normal, albedo_pix, view_dir = renderer.render(
                     vertices, faces, normals, albedo, view["k"], view["t"],
                     args.resolution)
                 rgb = shade(shading_normal, view_dir, albedo_pix, params) * alpha[..., None]
-                loss = loss + s0.photometric_loss(rgb, alpha, view)
+                if args.rgb_weight:
+                    loss = loss + args.rgb_weight * s0.photometric_loss(rgb, alpha, view)
                 if args.sil_weight:
                     loss = loss + args.sil_weight * s0.silhouette_loss(alpha, view)
             loss = loss / len(train["views"]) + args.l_dev_weight * l_dev.mean()
@@ -581,9 +624,7 @@ def main():
                                                       / args.voxel ** 2)
             optimiser.zero_grad(set_to_none=True)
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(
-                [state["sdf"], state["deform"], state["weights"], color,
-                 params["sh_diffuse"], params["sh_specular"], params["spec_gain"]], 1.0)
+            torch.nn.utils.clip_grad_norm_(clip_params, 1.0)
             optimiser.step()
             with torch.no_grad():
                 state["sdf"].clamp_(-3 * cell, 3 * cell)
@@ -599,7 +640,7 @@ def main():
         vertices, faces_i32, faces, _ = extract(state)
         normals = vertex_normals(vertices, faces)
         if not args.extract_only:
-            albedo = sample_color(vertices, color, low, high)
+            albedo = sample_color(vertices, albedo_field(), low, high)
             train_stats = evaluate_views(renderer, vertices, faces_i32, normals, albedo,
                                          params, train["views"], args.resolution)
             heldout_stats = evaluate_views(renderer, vertices, faces_i32, normals, albedo,
@@ -628,8 +669,10 @@ def main():
         "mesh_sha256_16": s0.sha256_16(run_dir / "mesh.ply"),
         "correspondence": corr_stats,
         "losses": {k: float(v) for k, v in {
-            "sil_weight": args.sil_weight, "corr_weight": args.corr_weight,
-            "l_dev_weight": args.l_dev_weight}.items()},
+            "rgb_weight": args.rgb_weight, "sil_weight": args.sil_weight,
+            "corr_weight": args.corr_weight, "l_dev_weight": args.l_dev_weight}.items()},
+        "albedo": {"mode": args.albedo_mode, "color_res": args.color_res,
+                   "color_rank": args.color_rank if args.albedo_mode == "lowrank" else None},
         "train_render": train_stats, "heldout_primary_render": heldout_stats,
         "heldout_all_render": heldout_all_stats, "history": history,
     }
