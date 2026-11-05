@@ -37,6 +37,11 @@ MESHES = {
 
 VOXEL = 0.011501
 
+# 运行时由 --scene / --heldout / --mesh-path / --voxel 覆盖（默认值保持上一条工作线的行为）
+SCENE_DIR = SCENE
+HELDOUT_DIR = HELDOUT
+MESH_PATHS = dict(MESHES)
+
 
 # ---------------------------------------------------------------- IO / 几何
 
@@ -552,6 +557,7 @@ def render_and_eval(ctx, verts, faces, heldout_cams, heldout_imgs, heldout_alpha
 # ---------------------------------------------------------------- 主流程
 
 def main():
+    global SCENE_DIR, HELDOUT_DIR, MESH_PATHS, VOXEL
     ap = argparse.ArgumentParser()
     ap.add_argument("--meshes", default="vggt")
     ap.add_argument("--atlas", default="2048")
@@ -566,17 +572,32 @@ def main():
     ap.add_argument("--oracle", action="store_true",
                     help="几何上界：每个 heldout 视角只用它自己烘焙纹理再渲染该视角")
     ap.add_argument("--tag", default="")
+    ap.add_argument("--scene", default=str(SCENE),
+                    help="训练场景根目录（需 geometry/gt/cameras.json 与 images/）")
+    ap.add_argument("--heldout", default=str(HELDOUT),
+                    help="heldout 根目录（需 cameras.json 与 images/，RGBA）")
+    ap.add_argument("--mesh-path", action="append", default=[],
+                    help="覆盖网格路径，形如 name=path（可重复）")
+    ap.add_argument("--voxel", type=float, default=VOXEL,
+                    help="几何体素尺度，用于遮挡容差与接缝邻域（默认 Lego 值）")
     args = ap.parse_args()
+
+    SCENE_DIR = Path(args.scene)
+    HELDOUT_DIR = Path(args.heldout)
+    for spec in args.mesh_path:
+        name, path = spec.split("=", 1)
+        MESH_PATHS[name] = Path(path)
+    VOXEL = args.voxel
 
     device = "cuda"
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     ctx = dr.RasterizeCudaContext()
 
-    train_cams = load_cameras(SCENE / "geometry" / "gt" / "cameras.json")
-    train_imgs, _ = load_images(train_cams, SCENE / "images", device)
-    held_cams = load_cameras(HELDOUT / "cameras.json")
-    held_imgs, held_alphas = load_images(held_cams, HELDOUT / "images", device)
+    train_cams = load_cameras(SCENE_DIR / "geometry" / "gt" / "cameras.json")
+    train_imgs, _ = load_images(train_cams, SCENE_DIR / "images", device)
+    held_cams = load_cameras(HELDOUT_DIR / "cameras.json")
+    held_imgs, held_alphas = load_images(held_cams, HELDOUT_DIR / "images", device)
     if args.max_cams:
         train_cams, train_imgs = train_cams[:args.max_cams], train_imgs[:args.max_cams]
     if args.max_heldout:
@@ -590,7 +611,7 @@ def main():
                "meshes": {}, "runs": []}
 
     for mesh_name in [x.strip() for x in args.meshes.split(",") if x.strip()]:
-        mesh_path = MESHES[mesh_name]
+        mesh_path = MESH_PATHS[mesh_name]
         cache_dir = out_dir / "cache"
         verts, faces = load_mesh(mesh_path, cache_dir / f"{mesh_name}.npz")
         vmapping, uv_faces, uvs = unwrap_uv(verts, faces, cache_dir / f"{mesh_name}_uv.npz")
