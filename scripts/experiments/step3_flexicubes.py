@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Level 3 controlled run: FlexiCubes (nvdiffrec) from the VGGT mesh.
+"""Level 3 controlled run: FlexiCubes (nvdiffrec) from an input triangle mesh.
 
-The VGGT mesh is converted to a signed-distance grid (nearest-surface proxy),
-then a FlexiCubes surface is optimised with image supervision:
+The input mesh (VGGT or the GT-depth proxy) is converted to a signed-distance
+grid with a triangle-level, boundary-aware sign field, then a FlexiCubes surface
+is optimised with image supervision:
 
     L = RGB(foreground) + w_sil * symmetric silhouette
         + w_corr * sparse multi-view correspondence
@@ -11,6 +12,11 @@ then a FlexiCubes surface is optimised with image supervision:
 Appearance is a learnable 3D colour grid sampled at the dual vertices plus the
 degree-2 SH diffuse/specular model from Step 0.  Cameras are fixed GT cameras;
 poses and intrinsics are never re-estimated.
+
+``--extract-only`` exports the initialised iso-surface itself: no SDF/FlexiCubes
+weight/deform perturbation, no optimiser and no training loop, so it is a true
+0-step reference.  The earlier ``init_sA`` arm (one Adam step plus those
+perturbations) is historical and does not measure plain initialisation.
 
 Level 3 requires at least two seeds for a repeatability noise floor.  The
 script writes one output folder per run and a combined summary.
@@ -38,7 +44,6 @@ from scipy.spatial import cKDTree
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, "/root/deps/nvdiffrec")
 import step0_objective as s0
-import step0_1_diagnostics as s01
 from mesh_opt.geometry import vertex_normals
 from geometry.flexicubes import FlexiCubes
 from tsdf_mesh import write_ply
@@ -72,9 +77,10 @@ def parse_args():
     parser.add_argument("--corr-every", type=int, default=5)
     parser.add_argument("--l-dev-weight", type=float, default=0.1)
     parser.add_argument("--deform-fraction", type=float, default=0.25)
-    parser.add_argument("--sdf-init", choices=["proxy", "depth"], default="proxy",
-                        help="proxy = nearest-surface signed field with visual-hull fix; "
-                             "depth = sign voted from depth rendered off the VGGT mesh")
+    parser.add_argument("--extract-only", action="store_true",
+                        help="export the initialised iso-surface only: skips the random "
+                             "perturbations (sdf/weights/deform), the optimiser and the "
+                             "whole training loop, so it is a true 0-step reference")
     parser.add_argument("--voxel", type=float, default=0.01150144350298549)
     parser.add_argument("--seed", type=int, default=20261105)
     parser.add_argument("--heldout-count", type=int, default=4)
@@ -225,9 +231,146 @@ def correspondence_coverage(points, mesh, voxel):
             "surface_coverage_1vox": float((surface_distance <= voxel).mean())}
 
 
-def visual_hull_inside(points, views, resolution):
-    """True where a grid point projects inside every GT foreground silhouette."""
-    inside = np.ones(len(points), dtype=bool)
+def _closest_on_triangles(points, a, b, c):
+    """Vectorised point-triangle closest point (Ericson, Real-Time Collision).
+
+    The seven Voronoi regions (three vertices, three edges, interior) are
+    evaluated in the reference order and applied by priority, which avoids the
+    branch-ordering bug of a naive ``np.where`` chain.
+    """
+    ab, ac = b - a, c - a
+    ap = points - a
+    d1 = (ab * ap).sum(-1)
+    d2 = (ac * ap).sum(-1)
+    bp = points - b
+    d3 = (ab * bp).sum(-1)
+    d4 = (ac * bp).sum(-1)
+    cp = points - c
+    d5 = (ab * cp).sum(-1)
+    d6 = (ac * cp).sum(-1)
+    va = d3 * d6 - d5 * d4
+    vb = d5 * d2 - d1 * d6
+    vc = d1 * d4 - d3 * d2
+
+    shape = np.broadcast_shapes(points.shape, a.shape)
+    result = np.empty(shape, dtype=points.dtype)
+    pending = np.ones(shape[:-1], dtype=bool)
+
+    def place(mask, value):
+        nonlocal pending
+        target = mask & pending
+        result[target] = value[target]
+        pending = pending & ~mask
+
+    place((d1 <= 0) & (d2 <= 0), a)
+    place((d3 >= 0) & (d4 <= d3), b)
+    place((vc <= 0) & (d1 >= 0) & (d3 <= 0),
+          a + ab * (d1 / np.maximum(d1 - d3, 1e-30))[..., None])
+    place((d6 >= 0) & (d5 <= d6), c)
+    place((vb <= 0) & (d2 >= 0) & (d6 <= 0),
+          a + ac * (d2 / np.maximum(d2 - d6, 1e-30))[..., None])
+    place((va <= 0) & ((d4 - d3) >= 0) & ((d5 - d6) >= 0),
+          b + (c - b) * ((d4 - d3)
+                        / np.maximum((d4 - d3) + (d5 - d6), 1e-30))[..., None])
+    denom = np.maximum(va + vb + vc, 1e-30)
+    place(pending, a + ab * (vb / denom)[..., None] + ac * (vc / denom)[..., None])
+    return result
+
+
+def _segment_distance(point, a, b):
+    ab = b - a
+    t = ((point - a) * ab).sum(-1) / np.maximum((ab * ab).sum(-1), 1e-30)
+    t = np.clip(t, 0.0, 1.0)
+    return np.linalg.norm(point - (a + ab * t[..., None]), axis=-1)
+
+
+class TriangleSDF:
+    """Unsigned distance to the nearest triangle plus a boundary-aware normal sign.
+
+    Distance: the magnitude is the exact point-to-triangle distance over the
+    ``k`` nearest triangle centroids (KD-tree shortlist), not a nearest-vertex
+    projection.  Sign: the sign of ``(p - closest_point) . face_normal`` of the
+    nearest triangle.  Triangles whose closest point lies on an **open** (used
+    by one face) edge are flagged unreliable, because the normal field is not
+    defined across an open boundary; those voxels are treated as outside by the
+    caller so an open surface is not forced into a closed solid.
+    """
+
+    def __init__(self, vertices, faces, k=8):
+        v = np.asarray(vertices, dtype=np.float64)
+        f = np.asarray(faces, dtype=np.int64)
+        self.faces = f
+        self.tri = v[f]
+        normal = np.cross(self.tri[:, 1] - self.tri[:, 0],
+                          self.tri[:, 2] - self.tri[:, 0])
+        self.normal = normal / np.maximum(np.linalg.norm(normal, axis=1,
+                                                         keepdims=True), 1e-12)
+        self.tree = cKDTree(self.tri.mean(1))
+        self.k = min(k, len(f))
+        edges = np.sort(np.vstack([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 0]]]), axis=1)
+        unique, counts = np.unique(edges, axis=0, return_counts=True)
+        boundary = unique[counts == 1]
+        self.n_vertices = len(v)
+        self.boundary = np.sort(boundary[:, 0].astype(np.int64) * self.n_vertices
+                                + boundary[:, 1])
+
+    def _is_boundary(self, a, b):
+        if len(self.boundary) == 0:
+            return np.zeros(len(a), dtype=bool)
+        code = np.minimum(a, b).astype(np.int64) * self.n_vertices \
+            + np.maximum(a, b).astype(np.int64)
+        position = np.clip(np.searchsorted(self.boundary, code), 0,
+                           len(self.boundary) - 1)
+        return self.boundary[position] == code
+
+    def query(self, points, chunk=60000):
+        points = np.asarray(points, dtype=np.float64)
+        total = len(points)
+        distance = np.zeros(total)
+        sign = np.ones(total)
+        reliable = np.ones(total, dtype=bool)
+        for start in range(0, total, chunk):
+            block = points[start:start + chunk]
+            _, index = self.tree.query(block, k=self.k)
+            tri = self.tri[index]
+            a, b, c = tri[..., 0, :], tri[..., 1, :], tri[..., 2, :]
+            closest = _closest_on_triangles(block[:, None, :], a, b, c)
+            spread = np.linalg.norm(block[:, None, :] - closest, axis=-1)
+            best = np.argmin(spread, axis=1)
+            rows = np.arange(len(block))
+            nearest_point = closest[rows, best]
+            nearest_face = index[rows, best]
+            normal = self.normal[nearest_face]
+            raw = ((block - nearest_point) * normal).sum(-1)
+            block_sign = np.where(np.abs(raw) < 1e-12, -1.0, np.sign(raw))
+            tri_best = self.faces[nearest_face]
+            verts = tri[rows, best]
+            edges = [_segment_distance(nearest_point, verts[:, i], verts[:, (i + 1) % 3])
+                     for i in range(3)]
+            edge_dist = np.stack(edges)
+            which = np.argmin(edge_dist, axis=0)
+            on_edge = edge_dist.min(0) < 1e-7
+            closed = ~self._is_boundary(tri_best[rows, which],
+                                        tri_best[rows, (which + 1) % 3])
+            block_distance = spread[rows, best]
+            block_reliable = ~(on_edge & ~closed)
+            distance[start:start + len(block)] = block_distance
+            sign[start:start + len(block)] = block_sign
+            reliable[start:start + len(block)] = block_reliable
+        return distance, sign, reliable
+
+
+def observation_status(points, views, resolution):
+    """Separate 'observed background' (carve) from 'never observed' (unknown).
+
+    A view only proves a point is outside when it actually sees background on
+    that pixel.  Points outside the frustum, or behind the image border, are
+    unknown and are *not* deleted.
+    """
+    total = len(points)
+    carved = np.zeros(total, dtype=bool)
+    observed = np.zeros(total, dtype=bool)
+    foreground = np.zeros(total, dtype=bool)
     for view in views:
         intrinsic = view["k"].detach().cpu().numpy()
         pose = view["t"].detach().cpu().numpy()
@@ -235,20 +378,26 @@ def visual_hull_inside(points, views, resolution):
         cam = points @ pose[:3, :3].T + pose[:3, 3]
         depth = cam[:, 2]
         valid = depth > 0.05
-        u = np.zeros(len(points))
-        v = np.zeros(len(points))
+        u = np.zeros(total)
+        v = np.zeros(total)
         u[valid] = intrinsic[0, 0] * cam[valid, 0] / depth[valid] + intrinsic[0, 2]
         v[valid] = intrinsic[1, 1] * cam[valid, 1] / depth[valid] + intrinsic[1, 2]
-        inside_view = valid & (u >= 0) & (u < resolution) & (v >= 0) & (v < resolution)
-        hit = np.zeros(len(points), dtype=bool)
-        if inside_view.any():
-            hit[inside_view] = mask[v[inside_view].astype(int),
-                                    u[inside_view].astype(int)]
-        inside &= hit
-    return inside
+        inside_image = valid & (u >= 0) & (u < resolution) & (v >= 0) & (v < resolution)
+        hit = np.zeros(total, dtype=bool)
+        if inside_image.any():
+            rows = v[inside_image].astype(int)
+            cols = u[inside_image].astype(int)
+            hit[inside_image] = mask[rows, cols]
+        observed |= inside_image
+        foreground |= inside_image & hit
+        carved |= inside_image & ~hit
+    stats = {"unknown_fraction": float((~observed).mean()),
+             "carved_fraction": float(carved.mean()),
+             "foreground_fraction": float(foreground.mean())}
+    return carved, observed, stats
 
 
-def build_sdf_grid(mesh, proxy, grid_res, deform_fraction, views, resolution):
+def build_sdf_grid(mesh, surface, grid_res, deform_fraction, views, resolution):
     flexicubes = FlexiCubes(device="cuda")
     grid, cubes = flexicubes.construct_voxel_grid(grid_res)
     vertices = mesh["vertices_np"]
@@ -258,90 +407,30 @@ def build_sdf_grid(mesh, proxy, grid_res, deform_fraction, views, resolution):
     cell = scale / grid_res
     x0 = grid * scale + torch.tensor(center, dtype=torch.float32, device="cuda")
     points = x0.detach().cpu().numpy()
-    signed = proxy.signed(points)
-    distance = np.abs(signed)
-    inside = visual_hull_inside(points, views, resolution)
-    # Outside the multi-view visual hull the sign is forced positive; otherwise
-    # the nearest-surface normal sign is used.  Without this the non-watertight
-    # VGGT mesh produces a closed blob that fills the whole grid.
-    signed = np.where(inside, signed, distance)
-    signed = np.clip(signed, -3 * cell, 3 * cell)
+    distance, sign, reliable = surface.query(points)
+    carved, observed, obs_stats = observation_status(points, views, resolution)
+    # Carved: a camera saw background on that pixel.  Unreliable: the nearest
+    # point sits on an open boundary, where the normal field is undefined.
+    # Unknown: never in any frustum -> keep the surface sign instead of deleting.
+    sign = np.where(carved | ~reliable, 1.0, sign)
+    signed = np.clip(distance * sign, -3 * cell, 3 * cell)
     sdf = torch.nn.Parameter(torch.tensor(signed, dtype=torch.float32, device="cuda"))
     weights = torch.nn.Parameter(torch.ones(len(cubes), 21, device="cuda"))
     deform = torch.nn.Parameter(torch.zeros_like(x0))
     max_disp = deform_fraction * cell
     bounds = (torch.tensor(center - scale / 2, dtype=torch.float32, device="cuda"),
               torch.tensor(center + scale / 2, dtype=torch.float32, device="cuda"))
-    return {"flexicubes": flexicubes, "grid": grid, "cubes": cubes, "x0": x0,
-            "sdf": sdf, "weights": weights, "deform": deform, "max_disp": max_disp,
-            "scale": scale, "cell": cell, "bounds": bounds, "center": center}
-
-
-def build_sdf_grid_depth(mesh, proxy, views, grid_res, deform_fraction, resolution):
-    """Depth-vote init: sign from depth rendered off the VGGT mesh itself.
-
-    The nearest-surface proxy used by ``build_sdf_grid`` has no reliable sign far
-    from the mesh (the VGGT surface is non-watertight), which injects spurious
-    level sets.  Here each grid vertex is projected into every fixed GT camera
-    and compared with the depth rendered from the same mesh: in front of the
-    rendered surface is outside (+), behind it is inside (-).  The magnitude
-    still comes from the proxy distance so the band has a usable gradient, and
-    vertices outside every silhouette default to outside.
-    """
-    flexicubes = FlexiCubes(device="cuda")
-    grid, cubes = flexicubes.construct_voxel_grid(grid_res)
-    vertices = mesh["vertices_np"]
-    low, high = vertices.min(0), vertices.max(0)
-    center = (low + high) / 2
-    scale = float((high - low).max()) * 1.10
-    cell = scale / grid_res
-    x0 = grid * scale + torch.tensor(center, dtype=torch.float32, device="cuda")
-    points = x0.detach().cpu().numpy()
-    distance = np.abs(proxy.signed(points))
-    renderer = s0.NvdRaster()
-    zeros = torch.zeros_like(mesh["vertices"])
-    votes = np.zeros(len(points), dtype=np.int32)
-    observed = np.zeros(len(points), dtype=bool)
-    for view in views:
-        depth, alpha, _, _, _ = renderer.render(
-            mesh["vertices"], mesh["faces_i32"], zeros, zeros,
-            view["k"], view["t"], resolution)
-        depth_np = depth.detach().cpu().numpy()
-        mask_np = alpha.detach().cpu().numpy() > 0.5
-        intrinsic = view["k"].detach().cpu().numpy()
-        pose = view["t"].detach().cpu().numpy()
-        cam = points @ pose[:3, :3].T + pose[:3, 3]
-        z = cam[:, 2]
-        valid = z > 0.05
-        u = np.zeros(len(points))
-        v = np.zeros(len(points))
-        u[valid] = intrinsic[0, 0] * cam[valid, 0] / z[valid] + intrinsic[0, 2]
-        v[valid] = intrinsic[1, 1] * cam[valid, 1] / z[valid] + intrinsic[1, 2]
-        inside_image = valid & (u >= 0) & (u < resolution) & (v >= 0) & (v < resolution)
-        seen = np.zeros(len(points), dtype=bool)
-        if inside_image.any():
-            rows = v[inside_image].astype(int)
-            cols = u[inside_image].astype(int)
-            seen[inside_image] = mask_np[rows, cols]
-        if seen.any():
-            reference = depth_np[v[seen].astype(int), u[seen].astype(int)]
-            behind = z[seen] > reference
-            votes[seen] += np.where(behind, -1, 1)
-            observed |= seen
-    signed = np.where(votes < 0, -1.0, 1.0) * distance
-    signed = np.clip(signed, -3 * cell, 3 * cell)
-    sdf = torch.nn.Parameter(torch.tensor(np.asarray(signed, dtype=np.float32),
-                                          device="cuda"))
-    weights = torch.nn.Parameter(torch.ones(len(cubes), 21, device="cuda"))
-    deform = torch.nn.Parameter(torch.zeros_like(x0))
-    max_disp = deform_fraction * cell
-    bounds = (torch.tensor(center - scale / 2, dtype=torch.float32, device="cuda"),
-              torch.tensor(center + scale / 2, dtype=torch.float32, device="cuda"))
+    init_stats = {"mode": "triangle_normal_boundary_aware",
+                  "distance": "exact point-to-nearest-triangle (k=8 centroid shortlist)",
+                  "sign": "nearest-triangle normal projection; open-edge closest points -> outside",
+                  "unknown_handling": "kept surface sign (not deleted)",
+                  "unreliable_fraction": float((~reliable).mean()),
+                  "inside_fraction": float((signed < 0).mean()),
+                  **obs_stats}
     return {"flexicubes": flexicubes, "grid": grid, "cubes": cubes, "x0": x0,
             "sdf": sdf, "weights": weights, "deform": deform, "max_disp": max_disp,
             "scale": scale, "cell": cell, "bounds": bounds, "center": center,
-            "sdf_init": {"mode": "depth", "observed_fraction": float(observed.mean()),
-                         "inside_fraction": float((signed < 0).mean())}}
+            "sdf_init": init_stats}
 
 
 def extract(state):
@@ -379,19 +468,15 @@ def main():
     started = time.time()
 
     mesh = s0.load_mesh(Path(args.vggt_mesh), device)
-    proxy = s01.ProxySurface(Path(args.vggt_mesh), device)
+    surface = TriangleSDF(mesh["vertices_np"], mesh["faces_np"])
     train = s0.load_views(Path(args.gt_cameras), Path(args.train_images),
                           args.resolution, device)
     if not train["views"]:
         raise ValueError("no train views")
-    if args.sdf_init == "depth":
-        print(f"[{args.run}] building depth-vote init", flush=True)
-        state = build_sdf_grid_depth(mesh, proxy, train["views"], args.grid_res,
-                                     args.deform_fraction, args.resolution)
-    else:
-        state = build_sdf_grid(mesh, proxy, args.grid_res, args.deform_fraction,
-                               train["views"], args.resolution)
+    state = build_sdf_grid(mesh, surface, args.grid_res, args.deform_fraction,
+                           train["views"], args.resolution)
     state["grid_res"] = args.grid_res
+    print(f"[{args.run}] sdf init {json.dumps(state['sdf_init'])}", flush=True)
 
     low, high = state["bounds"]
     cell = state["cell"]
@@ -404,105 +489,112 @@ def main():
               "spec_gain": torch.nn.Parameter(torch.tensor(0.1, device=device))}
     with torch.no_grad():
         params["sh_diffuse"][0] = 1.0 / s0.Y00
-        state["deform"].add_(torch.randn_like(state["deform"]) * 0.02)
-        state["weights"].add_(torch.randn_like(state["weights"]) * 0.02)
-        state["sdf"].add_(torch.randn_like(state["sdf"]) * 0.15 * cell)
-
-    heldout_dir = Path(args.heldout_dir)
-    heldout_all = s0.load_views(heldout_dir / "cameras.json", heldout_dir / "images",
-                               args.resolution, device,
-                               split_json=heldout_dir / "split.json")
-    count = min(args.heldout_count, len(heldout_all["views"]))
-    indices = np.unique(np.linspace(0, len(heldout_all["views"]) - 1,
-                                   count).round().astype(int))
-    heldout_primary = [heldout_all["views"][i] for i in indices]
-
-    if args.corr_weight <= 0 and not args.corr_file:
-        corr_points = np.zeros((0, 3))
-        corr_stats = {"disabled": True}
-    elif args.corr_file and Path(args.corr_file).exists():
-        payload = np.load(args.corr_file)
-        corr_points = payload["points"]
-        corr_stats = json.loads(payload["stats"].item())
-    else:
-        corr_points, corr_stats = sift_triangulation(
-            args.gt_cameras, args.train_images, args.voxel)
-        np.savez_compressed(run_dir / "correspondence.npz", points=corr_points,
-                            stats=json.dumps(corr_stats))
-    corr_stats.update(correspondence_coverage(corr_points, mesh, args.voxel))
-    corr_np = corr_points.astype(np.float32) if len(corr_points) else None
-    print(f"[{args.run}] corr {json.dumps(corr_stats)}", flush=True)
-
-    renderer = s0.NvdRaster()
-    optimiser = torch.optim.Adam([
-        {"params": [state["sdf"]], "lr": args.lr_sdf},
-        {"params": [state["deform"]], "lr": args.lr_deform},
-        {"params": [state["weights"]], "lr": args.lr_weights},
-        {"params": [color], "lr": args.lr_color},
-        {"params": [params["sh_diffuse"], params["sh_specular"], params["spec_gain"]],
-         "lr": args.lr_light},
-    ])
 
     history = []
-    corr_index = corr_target = None
-    for iteration in range(args.iters):
-        vertices, faces, faces_long, l_dev = extract(state)
-        normals = vertex_normals(vertices, faces_long)
-        albedo = sample_color(vertices, color, low, high)
-        loss = vertices.sum() * 0.0
-        for view in train["views"]:
-            depth, alpha, shading_normal, albedo_pix, view_dir = renderer.render(
-                vertices, faces, normals, albedo, view["k"], view["t"], args.resolution)
-            rgb = shade(shading_normal, view_dir, albedo_pix, params) * alpha[..., None]
-            loss = loss + s0.photometric_loss(rgb, alpha, view)
-            if args.sil_weight:
-                loss = loss + args.sil_weight * s0.silhouette_loss(alpha, view)
-        loss = loss / len(train["views"]) + args.l_dev_weight * l_dev.mean()
-        if args.corr_weight and corr_np is not None and len(corr_np):
-            # Rebuild the association every iteration: FlexiCubes changes the
-            # vertex count between iterations, so a cached index would go stale.
-            with torch.no_grad():
-                tree = cKDTree(vertices.detach().cpu().numpy())
-                distance, index = tree.query(corr_np, k=1)
-                keep = distance <= args.corr_max_voxels * args.voxel
-                corr_index = torch.from_numpy(index[keep]).long().to(device)
-                corr_target = torch.from_numpy(corr_np[keep]).to(device)
-            if corr_index.numel():
-                delta = vertices[corr_index] - corr_target
-                loss = loss + args.corr_weight * (delta.pow(2).sum(-1).mean()
-                                                  / args.voxel ** 2)
-        optimiser.zero_grad(set_to_none=True)
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(
-            [state["sdf"], state["deform"], state["weights"], color,
-             params["sh_diffuse"], params["sh_specular"], params["spec_gain"]], 1.0)
-        optimiser.step()
+    if args.extract_only:
+        print(f"[{args.run}] extract-only: no perturbation, no optimiser, "
+              "no training loop", flush=True)
+        corr_stats = {"skipped": "extract_only"}
+        train_stats = heldout_stats = heldout_all_stats = None
+    else:
+        # Kept for the historical 100-step arm only.  The previous ``init_sA``
+        # (1 Adam step + this perturbation) is superseded by --extract-only.
         with torch.no_grad():
-            state["sdf"].clamp_(-3 * cell, 3 * cell)
-        if iteration % args.log_every == 0 or iteration == args.iters - 1:
-            history.append({"iter": iteration, "loss": float(loss),
-                            "faces": int(len(faces)),
-                            "vertices": int(len(vertices)),
-                            "peak_mib": sampler.delta_mib})
-            print(f"[{args.run}] iter {iteration} loss {float(loss):.6f} "
-                  f"faces {len(faces)} peak {sampler.delta_mib} MiB", flush=True)
+            state["deform"].add_(torch.randn_like(state["deform"]) * 0.02)
+            state["weights"].add_(torch.randn_like(state["weights"]) * 0.02)
+            state["sdf"].add_(torch.randn_like(state["sdf"]) * 0.15 * cell)
+
+        heldout_dir = Path(args.heldout_dir)
+        heldout_all = s0.load_views(heldout_dir / "cameras.json", heldout_dir / "images",
+                                   args.resolution, device,
+                                   split_json=heldout_dir / "split.json")
+        count = min(args.heldout_count, len(heldout_all["views"]))
+        indices = np.unique(np.linspace(0, len(heldout_all["views"]) - 1,
+                                       count).round().astype(int))
+        heldout_primary = [heldout_all["views"][i] for i in indices]
+
+        if args.corr_weight <= 0 and not args.corr_file:
+            corr_points = np.zeros((0, 3))
+            corr_stats = {"disabled": True}
+        elif args.corr_file and Path(args.corr_file).exists():
+            payload = np.load(args.corr_file)
+            corr_points = payload["points"]
+            corr_stats = json.loads(payload["stats"].item())
+        else:
+            corr_points, corr_stats = sift_triangulation(
+                args.gt_cameras, args.train_images, args.voxel)
+            np.savez_compressed(run_dir / "correspondence.npz", points=corr_points,
+                                stats=json.dumps(corr_stats))
+        corr_stats.update(correspondence_coverage(corr_points, mesh, args.voxel))
+        corr_np = corr_points.astype(np.float32) if len(corr_points) else None
+        print(f"[{args.run}] corr {json.dumps(corr_stats)}", flush=True)
+
+        renderer = s0.NvdRaster()
+        optimiser = torch.optim.Adam([
+            {"params": [state["sdf"]], "lr": args.lr_sdf},
+            {"params": [state["deform"]], "lr": args.lr_deform},
+            {"params": [state["weights"]], "lr": args.lr_weights},
+            {"params": [color], "lr": args.lr_color},
+            {"params": [params["sh_diffuse"], params["sh_specular"], params["spec_gain"]],
+             "lr": args.lr_light},
+        ])
+
+        corr_index = corr_target = None
+        for iteration in range(args.iters):
+            vertices, faces, faces_long, l_dev = extract(state)
+            normals = vertex_normals(vertices, faces_long)
+            albedo = sample_color(vertices, color, low, high)
+            loss = vertices.sum() * 0.0
+            for view in train["views"]:
+                depth, alpha, shading_normal, albedo_pix, view_dir = renderer.render(
+                    vertices, faces, normals, albedo, view["k"], view["t"],
+                    args.resolution)
+                rgb = shade(shading_normal, view_dir, albedo_pix, params) * alpha[..., None]
+                loss = loss + s0.photometric_loss(rgb, alpha, view)
+                if args.sil_weight:
+                    loss = loss + args.sil_weight * s0.silhouette_loss(alpha, view)
+            loss = loss / len(train["views"]) + args.l_dev_weight * l_dev.mean()
+            if args.corr_weight and corr_np is not None and len(corr_np):
+                # Rebuild the association every iteration: FlexiCubes changes the
+                # vertex count between iterations, so a cached index would go stale.
+                with torch.no_grad():
+                    tree = cKDTree(vertices.detach().cpu().numpy())
+                    distance, index = tree.query(corr_np, k=1)
+                    keep = distance <= args.corr_max_voxels * args.voxel
+                    corr_index = torch.from_numpy(index[keep]).long().to(device)
+                    corr_target = torch.from_numpy(corr_np[keep]).to(device)
+                if corr_index.numel():
+                    delta = vertices[corr_index] - corr_target
+                    loss = loss + args.corr_weight * (delta.pow(2).sum(-1).mean()
+                                                      / args.voxel ** 2)
+            optimiser.zero_grad(set_to_none=True)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(
+                [state["sdf"], state["deform"], state["weights"], color,
+                 params["sh_diffuse"], params["sh_specular"], params["spec_gain"]], 1.0)
+            optimiser.step()
+            with torch.no_grad():
+                state["sdf"].clamp_(-3 * cell, 3 * cell)
+            if iteration % args.log_every == 0 or iteration == args.iters - 1:
+                history.append({"iter": iteration, "loss": float(loss),
+                                "faces": int(len(faces)),
+                                "vertices": int(len(vertices)),
+                                "peak_mib": sampler.delta_mib})
+                print(f"[{args.run}] iter {iteration} loss {float(loss):.6f} "
+                      f"faces {len(faces)} peak {sampler.delta_mib} MiB", flush=True)
 
     with torch.no_grad():
-        vertices, faces_long, _ = state["flexicubes"](
-            state["x0"] + state["max_disp"] * torch.tanh(state["deform"]),
-            state["sdf"], state["cubes"], args.grid_res,
-            state["weights"][:, :12].contiguous(), state["weights"][:, 12:20].contiguous(),
-            state["weights"][:, 20], training=False)
-        faces = faces_long.long()
-        faces_i32 = faces.to(torch.int32).contiguous()
+        vertices, faces_i32, faces, _ = extract(state)
         normals = vertex_normals(vertices, faces)
-        albedo = sample_color(vertices, color, low, high)
-        train_stats = evaluate_views(renderer, vertices, faces_i32, normals, albedo,
-                                     params, train["views"], args.resolution)
-        heldout_stats = evaluate_views(renderer, vertices, faces_i32, normals, albedo,
-                                       params, heldout_primary, args.resolution)
-        heldout_all_stats = evaluate_views(renderer, vertices, faces_i32, normals, albedo,
-                                           params, heldout_all["views"], args.resolution)
+        if not args.extract_only:
+            albedo = sample_color(vertices, color, low, high)
+            train_stats = evaluate_views(renderer, vertices, faces_i32, normals, albedo,
+                                         params, train["views"], args.resolution)
+            heldout_stats = evaluate_views(renderer, vertices, faces_i32, normals, albedo,
+                                           params, heldout_primary, args.resolution)
+            heldout_all_stats = evaluate_views(renderer, vertices, faces_i32, normals,
+                                               albedo, params, heldout_all["views"],
+                                               args.resolution)
     vertices_np = vertices.detach().cpu().numpy()
     faces_np = faces.detach().cpu().numpy()
     write_ply(run_dir / "mesh.ply", vertices_np, faces_np,
@@ -514,8 +606,9 @@ def main():
         "vggt_mesh": args.vggt_mesh, "vggt_mesh_sha256_16": mesh["sha256_16"],
         "views": len(train["views"]), "resolution": args.resolution,
         "grid_res": args.grid_res, "color_res": args.color_res,
-        "iters": args.iters, "seconds": seconds,
-        "sdf_init": {"mode": args.sdf_init, **(state.get("sdf_init") or {})},
+        "mode": "extract_only" if args.extract_only else "train",
+        "iters": 0 if args.extract_only else args.iters, "seconds": seconds,
+        "sdf_init": state.get("sdf_init") or {},
         "peak_vram_compute_mib": int(torch.cuda.max_memory_allocated() // 2**20),
         "peak_vram_smi_delta_mib": int(sampler.delta_mib),
         "gpu_used_before_mib": int(sampler.idle_mib),
