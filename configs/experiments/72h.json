@@ -703,7 +703,7 @@
                        "mesh_sha256_16": "7075f350132e82cc",
                        "heldout_primary": {"psnr": 17.95}, "train_psnr": 21.58},
           "sil_only": {"weights": {"rgb": 0, "sil": 0.5, "corr": 0}, "albedo": "grid", "iters": 100,
-                       "f1": 0.7865, "chamfer": 0.016151, "chamfer_x_input": 4.160,
+                       "f1": 0.7865, "chamfer": 0.016051, "chamfer_x_input": 4.160,
                        "normal_mean_deg": 50.53, "sharp_precision": 0.7435, "sharp_recall": 0.8664,
                        "area_true_m2": 22.902, "area_x_input": 2.004, "faces": 280672,
                        "components": 539, "components_ge_50_faces": 35, "boundary_edges": 0,
