@@ -25,7 +25,7 @@ T0 单视角投影融合，未见区域补全提升约 +7.2 dB PSNR、LPIPS 降�
 | 4 材质真实 | albedo vs 参考图 PSNR | 22.57 | **25.12** | +2.55 dB |
 | 4 材质真实 | 固定光照重渲 vs 参考图 PSNR | 17.61 | **18.44** | +0.83 dB |
 
-必须一起读的三条限定：
+必须一起读的四条限定：
 
 1. **只有 bf16 旁路臂跑完**。fp32（8.38 GB 权重）在本轮 90 min 排队窗口内始终拿不到
    ≥10.5 GB 空闲显存，没有产出。因此上表是**受限规格（bf16 权重）**数字，
@@ -33,10 +33,14 @@ T0 单视角投影融合，未见区域补全提升约 +7.2 dB PSNR、LPIPS 降�
 2. **同一张参考图**：两条线都用视角索引 0（`r_0.png`，GT `cameras.json` 的第 0 个 frame）
    作为唯一条件。T0 是"把这张图按可见性投影到 atlas"，SUPRA 是"以这张图为条件做生成"。
    没有把"更多条件视角"带来的收益混进来。
-3. **几何不是严格"零改动"**：SUPRA 的导出路径必定 `remesh=True`（Dual Contouring 重建 +
+3. **几何不是严格"零改动"（proxy 行）**：SUPRA 的导出路径默认 `remesh=True`（Dual Contouring 重建 +
    decimate），proxy 从 140,623 顶点变成 410,054 顶点 / 484,950 面。形状与位姿未变
    （对齐后 chamfer 0.0049 规范单位 ≈ 1.2 cm 均值；渲染轮廓 IoU 0.968，与 T0 的 0.968 一致），
    但拓扑被重生成。这是**方法固有的几何改动**，不是我们改的。
+4. **B1（VGGT 行）已补上，但与 proxy 行规格不同**：VGGT 在 `texture-size=1024` +
+   **不重网格化**（原始 202,660 顶点 / 348,875 面直接做 UV 展开，跳过 remesh 与 simplify）下跑通，
+   见 §5 的三次尝试。因此 vggt 与 proxy 两行**不是同一套导出配置**，只能各自与自己的 T0 行对比；
+   vggt 的绝对数值低于 proxy 不能直接归因于 Mesh 质量或模型结构。
 
 ## 1. 口径
 
@@ -63,37 +67,49 @@ T0 单视角投影融合，未见区域补全提升约 +7.2 dB PSNR、LPIPS 降�
 
 heldout 16 视角、atlas 2048。`*_std` 为 per-view 标准差。
 
-| 指标 | T0 proxy | SUPRA proxy (bf16) | T0 vggt | SUPRA vggt (bf16) |
+| 指标 | T0 proxy | SUPRA proxy (bf16, 2048/remesh) | T0 vggt | SUPRA vggt (bf16, 1024/不重网格) |
 |---|---|---|---|---|
-| psnr_full | 13.057 ± 2.650 | 19.181 ± 2.037 | 12.896 ± 2.541 | — |
-| psnr_fg | 8.075 ± 2.629 | 14.643 ± 2.253 | 7.909 ± 2.511 | — |
-| psnr_seen | 17.798 ± 1.914 | 19.171 ± 1.437 | 15.537 ± 1.871 | — |
-| psnr_unseen | 6.381 ± 1.869 | 13.591 ± 1.675 | 6.479 ± 1.817 | — |
-| ssim_full | 0.7199 ± 0.0473 | 0.7920 ± 0.0332 | 0.7028 ± 0.0431 | — |
-| psnr_inner（前景腐蚀 8 px） | 8.147 ± 2.804 | 14.739 ± 2.316 | 7.999 ± 2.700 | — |
-| lpips_fg | 0.4012 ± 0.0837 | 0.2142 ± 0.0439 | 0.4311 ± 0.0764 | — |
-| lpips_seen | 0.0774 ± 0.0166 | 0.0639 ± 0.0161 | 0.1110 ± 0.0249 | — |
-| lpips_unseen | 0.3600 ± 0.0925 | 0.1589 ± 0.0539 | 0.3723 ± 0.0824 | — |
-| silhouette IoU | 0.9676 ± 0.0100 | 0.9681 ± 0.0073 | 0.9362 ± 0.0249 | — |
-| 一致性 MAD 0↔1 | 0.0320 | 0.0162 | 0.0290 | — |
-| 一致性 MAD 0↔8 | 0.0690 | 0.0276 | 0.0595 | — |
-| 一致性 MAD 4↔12 | 0.0761 | 0.0343 | 0.0744 | — |
-| seam pairs | 544,086 | 336,178 | 286,948 | — |
-| seam mean \|ΔRGB\| | 0.0556 | 0.0348 | 0.0533 | — |
-| seam p95 \|ΔRGB\| | 0.3922 | 0.1333 | 0.3804 | — |
-| albedo PSNR vs ref | 22.573 | 25.119 | 19.578 | — |
-| relight PSNR vs ref | 17.607 | 18.444 | 16.385 | — |
-| roughness mean/std | —（无 MR） | 0.4977 / 0.0122 | — | — |
-| metallic mean/std | —（无 MR） | 0.0000 / 0.0001 | — | — |
+| psnr_full | 13.057 ± 2.650 | 19.181 ± 2.037 | 12.896 ± 2.541 | 16.802 ± 1.956 |
+| psnr_fg | 8.075 ± 2.629 | 14.643 ± 2.253 | 7.909 ± 2.511 | 12.167 ± 2.088 |
+| psnr_seen | 17.798 ± 1.914 | 19.171 ± 1.437 | 15.537 ± 1.871 | 16.571 ± 1.642 |
+| psnr_unseen | 6.381 ± 1.869 | 13.591 ± 1.675 | 6.479 ± 1.817 | 11.490 ± 1.779 |
+| ssim_full | 0.7199 ± 0.0473 | 0.7920 ± 0.0332 | 0.7028 ± 0.0431 | 0.7329 ± 0.0356 |
+| psnr_inner（前景腐蚀 8 px） | 8.147 ± 2.804 | 14.739 ± 2.316 | 7.999 ± 2.700 | 12.434 ± 2.262 |
+| lpips_fg | 0.4012 ± 0.0837 | 0.2142 ± 0.0439 | 0.4311 ± 0.0764 | 0.3121 ± 0.0433 |
+| lpips_seen | 0.0774 ± 0.0166 | 0.0639 ± 0.0161 | 0.1110 ± 0.0249 | 0.0922 ± 0.0256 |
+| lpips_unseen | 0.3600 ± 0.0925 | 0.1589 ± 0.0539 | 0.3723 ± 0.0824 | 0.2244 ± 0.0512 |
+| silhouette IoU | 0.9676 ± 0.0100 | 0.9681 ± 0.0073 | 0.9362 ± 0.0249 | 0.9363 ± 0.0249 |
+| 一致性 MAD 0↔1 | 0.0320 | 0.0162 | 0.0290 | 0.0179 |
+| 一致性 MAD 0↔8 | 0.0690 | 0.0276 | 0.0595 | 0.0250 |
+| 一致性 MAD 4↔12 | 0.0761 | 0.0343 | 0.0744 | 0.0381 |
+| seam pairs | 544,086 | 336,178 | 286,948 | 260,419 |
+| seam mean \|ΔRGB\| | 0.0556 | 0.0348 | 0.0533 | 0.0330 |
+| seam p95 \|ΔRGB\| | 0.3922 | 0.1333 | 0.3804 | 0.1255 |
+| albedo PSNR vs ref | 22.573 | 25.119 | 19.578 | 22.275 |
+| relight PSNR vs ref | 17.607 | 18.444 | 16.385 | 16.982 |
+| roughness mean/std | —（无 MR） | 0.4977 / 0.0122 | — | 0.4979 / 0.0123 |
+| metallic mean/std | —（无 MR） | 0.0000 / 0.0001 | — | 0.0000 / 0.0000 |
 
 关于 proxy 行需要注意的统计口径差异：
 
 - T0 的 seam pairs 更多（544,086 vs 336,178），因为 UV 展开器不同（T0 用 xatlas，SUPRA 用 o-voxel
   `uv_unwrap`），chart 边界数量与拓扑不同；两者都是"真实 3D 相邻点对"，但**不是同一组点对**，
   只能作量级对比。
-- `zero_vis_texels_share`（参考视角下不可见 texel 占 atlas 覆盖的比例）：T0 0.775、SUPRA 0.864
-  （SUPRA 的 chart 更多更碎，单视角条件下 atlas 里不可见 texel 比例更高）。这一点对 T0 更有利
-  （可见区覆盖更多），因此上表的 SUPRA 增益不是靠"占更多可见 texel"得来的。
+- `zero_vis_texels_share`（参考视角下不可见 texel 占 atlas 覆盖的比例）：T0 proxy 0.775、SUPRA proxy 0.864；
+  T0 vggt 0.834、SUPRA vggt 0.835（SUPRA 的 chart 更多更碎，单视角条件下 atlas 里不可见 texel 比例更高）。
+  这一点对 T0 更有利（可见区覆盖更多），因此上表的 SUPRA 增益不是靠"占更多可见 texel"得来的。
+
+关于 vggt 行（B1）：
+
+- **同样是"修正后口径"**：与 proxy 行共用 `tex_t1_eval.py` 的 axis（`p_canon=[−x,y,−z]`）与
+  UV（`V→1−V`）还原，`eval_final/summary.json` 同一份产物；轮廓 IoU 0.9363 与 T0 vggt 的 0.9362
+  吻合，可作为对齐正确的旁证。
+- **相对自己的 T0**：seen 16.57 vs 15.54（+1.03 dB）、unseen 11.49 vs 6.48（+5.01 dB）、
+  unseen LPIPS 0.224 vs 0.372（−40%）、seam 0.0330 vs 0.0533（−38%，p95 −67%）、
+  albedo 22.28 vs 19.58。方向与 proxy 行一致，但幅度更小。
+- **与 proxy 行的差**（不可直接归因）：seen −2.60 dB、unseen −2.10 dB、unseen LPIPS +0.066。
+  vggt 行同时叠加了三种差异：Mesh 本身（VGGT 几何，T0 的 unseen 也更低）、纹理 1024（proxy 是 2048）、
+  导出为不重网格化（proxy 是 remesh+decimate）。因此这 2 dB 不能单独归因于 Mesh。
 
 ## 3. 资源开销与执行
 
@@ -105,9 +121,13 @@ heldout 16 视角、atlas 2048。`*_std` 为 per-view 标准差。
 | 种子 | 42（全部 run 相同） |
 | proxy 单次耗时 | 161 s（端到端：加载权重 → 编码 → 25 步采样 → 双解码 → remesh/UV/烘焙/导出） |
 | proxy 峰值显存 | `peak_all=22,438 MiB`，`peak_delta=6,249 MiB`（同租户进程常驻 16.1 GB） |
-| GPU 排队 | `flock -n` 轮询 `/root/3dtex/.locks/gpu4090.lock`，空闲 <10.5 GB 立即放锁重试（等待期间不持锁），最长 90 min；**未杀任何他人进程** |
-| 产物 | `outputs/tex_t1_supra_20261105/`（`inputs/`、`glb_bf16/`、`t0_single_view/`、`eval/`、`logs/`） |
-| 日志 | `logs/supra_proxy_v0_s42_bf16.log`、`logs/eval_*.log`、`logs/vram_samples*.txt` |
+| vggt 单次耗时 | 166 s（同上，但跳过 remesh 与 simplify，直接对 348,875 面做 UV 展开） |
+| vggt 峰值显存 | `peak_all=22,926 MiB`，`peak_delta=6,737 MiB`（同租户进程常驻 16.2 GB） |
+| vggt 产物 | `glb_bf16/supra_vggt_v0_s42_bf16_no_remesh.glb`（18 MB；proxy 为 `supra_proxy_v0_s42_bf16.glb`） |
+| GPU 排队 | `flock -n` 轮询 `/root/3dtex/.locks/gpu4090.lock`，空闲 <6.5 GB（B1）/ <10.5 GB（fp32 主臂）立即放锁重试（等待期间不持锁）；**未杀任何他人进程，与几何线严格串行** |
+| 锁等待 | B1 在 20:07–20:23 被几何线 `step3_flexicubes.py` 扫参占用（`free` 一度 3134 MiB），按 45 s 重试排队，20:27:59 以 `free=7895 MiB` 拿到锁 |
+| 产物 | `outputs/tex_t1_supra_20261105/`（`inputs/`、`glb_bf16/`、`t0_single_view/`、`eval_final/`、`logs/`） |
+| 日志 | `logs/supra_proxy_v0_s42_bf16.log`、`logs/b1_*.log`、`logs/vram_b1_*.txt`、`logs/eval_*.log` |
 
 bf16 转换方式（旁路臂，可复现）：
 
@@ -136,7 +156,8 @@ bf16 转换方式（旁路臂，可复现）：
 需要补 `--extended-lambda` 与 `--expt-relaxed-constexpr`（否则 nvcc 报 lambda 错误）。
 
 `third_party/supra_tex/` 是上游源码快照（不随本仓库提交），由 `tex_t1_install.sh` 在缺失时按上述
-commit clone；bf16 旁路臂的 2 处改动（ABI dtype 豁免 + checkpoint→目标模块 dtype）只存在于该目录，
+commit clone；bf16 旁路臂的 2 处改动（ABI dtype 豁免 + checkpoint→目标模块 dtype）与导出旁路的
+2 个开关（`SUPRATEX_SKIP_SIMPLIFY=1`、`SUPRATEX_NO_REMESH=1`，见 `mesh_export.py`）只存在于该目录，
 若要复现需按 §3 的三条说明重打。
 
 ## 5. 失效 run（全部如实登记）
@@ -153,10 +174,15 @@ commit clone；bf16 旁路臂的 2 处改动（ABI dtype 豁免 + checkpoint→�
 | 19:55 | bf16 vggt 重试 | rc=1，秒级 | 误用 `completion_bf16/` 下的 checkpoint 路径（该目录只有 config），随后改指 `completion/` |
 | 19:57 | bf16 vggt（1024 / 300k） | rc=1，OOM | 同样 `CuMesh.simplify` CUDA OOM（空闲 7.9 GB 仍不足；降纹理/降简化目标没有降低该步峰值） |
 | 19:40–19:58 | 评测口径修正（非 run） | 废弃 3 份 summary | ① 漏了导出器的绕 Y 180° 变换（质心对不上，IoU 0.57）② 漏了 `uvs[:,1]=1−V` 的还原（纹理错位）③ MR 通道 R/B 读反。修正后 IoU 0.9681 |
+| 20:07 | B1 base（1024 / 250k，`flock` 已拿到） | rc=1，114 s，`peak_all=22,926 MiB`、`peak_delta=6,737 MiB` | `mesh.simplify` → `cumesh.simplify_step` CUDA OOM；采样与解码已完成，失败在导出阶段 |
+| 20:08–20:23 | B1 no_simplify 排队（非 run） | 未启动 | 几何线 `step3_flexicubes.py`（grid-res 160）持锁且 `free` 低至 3134 MiB；按 45 s 短持锁轮询排队，未并发、未杀进程 |
+| 20:23 | B1 no_simplify（跳过 simplify，仍 remesh） | rc=1，114 s，`peak_all=22,926 MiB` | remesh 输出面数过大，`cumesh.uv_unwrap → compute_charts` CUDA OOM |
+| 20:27:59 | B1 no_remesh（跳过 simplify 且不做 remesh） | **成功**，166 s，`peak_all=22,926 MiB`、`peak_delta=6,737 MiB`，GLB 18 MB | 以 `free=7895 MiB` 起跑；原始 202,660 顶点 / 348,875 面直接 UV 展开 |
 
-> 说明：vggt 臂两次都是"显存不足"而非"模型失败"（失败点都在导出阶段的 `CuMesh.simplify`，
-> 采样与解码已完成），vggt 行留空。最终口径的 summary 在
-> `outputs/tex_t1_supra_20261105/eval_final/summary.json`。
+> 说明：vggt 臂前两次失败都是"导出阶段显存不足"而非"模型失败"——采样与解码均已完成，
+> 失败点在 `CuMesh.simplify` 与 `cumesh.uv_unwrap → compute_charts`。第三条路径（不重网格化 +
+> 1024 纹理）跑通，vggt 行因此补齐；但仍需注意它**不是**与 proxy 同一套导出配置。
+> 最终口径的 summary 在 `outputs/tex_t1_supra_20261105/eval_final/summary.json`。
 
 ## 6. 复现
 
@@ -176,10 +202,16 @@ bash scripts/experiments/tex_t1_run.sh
 bash scripts/experiments/tex_t1_fallback.sh
 bash scripts/experiments/tex_t1_vggt_bf16_wait.sh
 
+# 4b) B1：vggt 行（1024 / 250k / 不重网格化；三次路径由 MODE 选择）
+MODE=base        bash scripts/experiments/tex_t1_vggt_b1.sh   # 1024/250k，simplify（本轮 OOM）
+MODE=no_simplify bash scripts/experiments/tex_t1_vggt_b1.sh   # 跳过 simplify，仍 remesh（本轮 OOM）
+MODE=no_remesh   bash scripts/experiments/tex_t1_vggt_b1.sh   # 跳过 simplify 与 remesh（本轮跑通）
+
 # 5) 四轴评测（T0 用 t0:<mesh> 规格复用同一渲染口径）
 python scripts/experiments/tex_t1_eval.py \
   --glb t0:proxy --glb t0:vggt \
   --glb supra_proxy_v0_s42_bf16=outputs/tex_t1_supra_20261105/glb_bf16/supra_proxy_v0_s42_bf16.glb \
+  --glb supra_vggt_v0_s42_bf16_no_remesh=outputs/tex_t1_supra_20261105/glb_bf16/supra_vggt_v0_s42_bf16_no_remesh.glb \
   --out outputs/tex_t1_supra_20261105/eval_final --save-renders
 ```
 
@@ -187,8 +219,9 @@ python scripts/experiments/tex_t1_eval.py \
 
 1. **fp32 主臂**：需要一段 ≥10.5 GB 空闲显存的窗口（proxy 峰值 ≈ 8.4 GB + 基线）。
    拿到后重跑 `tex_t1_run.sh`（seed 42/1234 + 两个 Mesh），才能给出可对比的基线。
-2. **vggt 臂**：同类几何换 Mesh 的对照，目前只有 T0 与 SUPRA 的输入包（N=648，fov 32.51°）；
-   两次 bf16 尝试都卡在导出阶段的 `CuMesh.simplify` OOM，需要在 ≥8.5 GB 空闲显存的窗口重跑。
+2. **vggt 同规格臂**：B1 已在 1024 + 不重网格化下补齐（原始 202,660 顶点 / 348,875 面），
+   但若要和 proxy 行严格同规格（2048 + remesh + decimate），仍需 ≥8.5 GB 空闲显存的窗口重跑
+   `MODE=base`；本轮 `base` 与 `no_simplify` 两次都卡在导出阶段 OOM，未完成分块 simplify 的尝试。
 3. **材质轴**：`roughness≈0.498±0.012 / metallic≈0` 是输入 `mra.png` 中性先验的延续，
    本轮不能作为"材质真实性"结论；要评这一轴需给非平凡 MRA 输入 + fp32 对照。
 4. **多视图条件**：单列为后续实验，不能把"条件数"收益算进模型结构优势。
