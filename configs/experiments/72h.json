@@ -977,6 +977,105 @@
           "logs": "outputs/step_sweep_20261105/logs"
         }
       },
+      "step_regularize_20261105": {
+        "date": "2026-11-05",
+        "doc_section": "docs/experiments/72H_GEOMETRY.md#1213",
+        "purpose": "upgrade or falsify the 12.12.8 pending root cause: shell inflation is the cheapest way to lower RGB L1 because L_dev bounds offset magnitude only and constrains neither area nor curvature",
+        "base_config": "proxy Mesh e4006a146e8ae5d6, grid-res 160, render 256, 16 GT cameras, 64^3 albedo + SH, dev 0.1, sil 0.5, corr 0.02, seed 20261105, 100 iters, corr file outputs/step_init_20261105/proxy_e100/correspondence.npz",
+        "regularisers": {
+          "area": "lambda_area * (S/S0 - 1)^2, S = 0.5*sum|cross| (true triangle area), S0 = 22.478 m2 from the same pre-training extract(state) including the 12.9 perturbation",
+          "curvature": "lambda_curv * B/B0, B = sum over shared edges |e|*(1-cos dihedral), B0 = 716.2",
+          "code": "scripts/experiments/step3_flexicubes.py --area-weight / --curv-weight"
+        },
+        "axes": {
+          "area_weight": {"values": [0.01, 0.1], "rgb_weight": 1.0},
+          "curv_weight": {"values": [0.01, 0.1], "rgb_weight": 1.0},
+          "conditional_cell": {"run": "r002_areg", "rule": "only run because areg010 brought area back to 2.010x with PSNR 19.37 >= 19", "rgb_weight": 0.02, "area_weight": 0.1}
+        },
+        "anchor_0_step": {"run": "outputs/step_init_20261105/proxy_e0", "area_x_input": 1.944, "area_x_S0": 0.988, "area_true_m2": 22.213, "f1": 0.8056,
+                          "precision": 0.7043, "recall": 0.9408, "chamfer": 0.016142, "sharp_precision": 0.6945, "sharp_recall": 0.9357, "normal_mean_deg": 48.60},
+        "reused": {
+          "full100": {"run": "outputs/step_init_20261105/proxy_e100", "rgb_weight": 1.0, "iters": 100, "f1": 0.6647, "chamfer": 0.016629,
+                      "area_true_m2": 37.909, "area_x_input": 3.318, "normal_mean_deg": 53.67, "sharp_precision": 0.3608,
+                      "sharp_recall": 0.8556, "heldout_primary": {"psnr": 19.10}, "mesh_sha256_16": "c8cecd09e3426bd6"},
+          "rgbw002": {"run": "outputs/step_sweep_20261105/rgbw002", "rgb_weight": 0.02, "iters": 100, "f1": 0.7636, "chamfer": 0.015698,
+                      "area_true_m2": 25.416, "area_x_input": 2.224, "normal_mean_deg": 50.39, "sharp_precision": 0.6254,
+                      "sharp_recall": 0.8679, "heldout_primary": {"psnr": 20.27}, "mesh_sha256_16": "c903a16173fbaaef"}
+        },
+        "runs": {
+          "areg001": {"rgb_weight": 1.0, "area_weight": 0.01, "curv_weight": 0.0, "color_res": 64, "iters": 100,
+                      "f1": 0.6624, "precision": 0.5707, "recall": 0.7891, "chamfer": 0.015696, "chamfer_x_input": 4.067,
+                      "normal_mean_deg": 48.63, "sharp_precision": 0.3898, "sharp_recall": 0.8108,
+                      "area_true_m2": 25.321, "area_x_input": 2.216, "region": {"opening": 4.12, "near": 15.82, "mid": 3.93, "far": 1.45},
+                      "heldout_primary": {"psnr": 19.22}, "train_psnr": 22.25, "faces": 339384, "seconds": 182.5,
+                      "peak_vram_compute_mib": 3255, "peak_vram_smi_delta_mib": 4905, "mesh_sha256_16": "56229368a74dc55e",
+                      "reg_last": {"area_rel_S0": 1.126}, "reg_ref": {"S0_m2": 22.478, "B0": 716.2}},
+          "areg010": {"rgb_weight": 1.0, "area_weight": 0.1, "curv_weight": 0.0, "color_res": 64, "iters": 100,
+                      "f1": 0.6800, "precision": 0.6058, "recall": 0.7748, "chamfer": 0.015202, "chamfer_x_input": 3.939,
+                      "normal_mean_deg": 47.56, "sharp_precision": 0.4420, "sharp_recall": 0.7982,
+                      "area_true_m2": 22.964, "area_x_input": 2.010, "region": {"opening": 3.57, "near": 14.68, "mid": 3.34, "far": 1.37},
+                      "heldout_primary": {"psnr": 19.37}, "train_psnr": 22.39, "faces": 305120, "seconds": 201.4,
+                      "peak_vram_compute_mib": 3252, "peak_vram_smi_delta_mib": 4801, "mesh_sha256_16": "3c3200f6d2afd31f",
+                      "reg_last": {"area_rel_S0": 1.021}, "reg_ref": {"S0_m2": 22.478, "B0": 716.2}},
+          "creg001": {"rgb_weight": 1.0, "area_weight": 0.0, "curv_weight": 0.01, "color_res": 64, "iters": 100,
+                      "f1": 0.7332, "precision": 0.6740, "recall": 0.8039, "chamfer": 0.017062, "chamfer_x_input": 4.422,
+                      "normal_mean_deg": 44.47, "sharp_precision": 0.6423, "sharp_recall": 0.8065,
+                      "area_true_m2": 19.469, "area_x_input": 1.704, "region": {"opening": 3.81, "near": 11.53, "mid": 2.15, "far": 1.98},
+                      "heldout_primary": {"psnr": 19.90}, "train_psnr": 23.16, "faces": 229472, "seconds": 200.2,
+                      "peak_vram_compute_mib": 3262, "peak_vram_smi_delta_mib": 4901, "mesh_sha256_16": "8e5d38b7927779b3",
+                      "reg_last": {"curv_rel_B0": 0.426}, "reg_ref": {"S0_m2": 22.478, "B0": 716.2}},
+          "creg010": {"rgb_weight": 1.0, "area_weight": 0.0, "curv_weight": 0.1, "color_res": 64, "iters": 100,
+                      "f1": 0.7501, "precision": 0.6998, "recall": 0.8082, "chamfer": 0.018067, "chamfer_x_input": 4.682,
+                      "normal_mean_deg": 43.96, "sharp_precision": 0.7447, "sharp_recall": 0.7606,
+                      "area_true_m2": 16.743, "area_x_input": 1.465, "region": {"opening": 3.08, "near": 9.77, "mid": 1.91, "far": 1.98},
+                      "heldout_primary": {"psnr": 18.49}, "train_psnr": 20.60, "faces": 181432, "seconds": 197.2,
+                      "peak_vram_compute_mib": 3266, "peak_vram_smi_delta_mib": 4761, "mesh_sha256_16": "4ab9ef2dec663524",
+                      "reg_last": {"curv_rel_B0": 0.140}, "reg_ref": {"S0_m2": 22.478, "B0": 716.2}},
+          "r002_areg": {"rgb_weight": 0.02, "area_weight": 0.1, "curv_weight": 0.0, "color_res": 64, "iters": 100,
+                        "f1": 0.7842, "precision": 0.7077, "recall": 0.8792, "chamfer": 0.015697, "chamfer_x_input": 4.068,
+                        "normal_mean_deg": 48.91, "sharp_precision": 0.7015, "sharp_recall": 0.8711,
+                        "area_true_m2": 22.490, "area_x_input": 1.968, "region": {"opening": 4.17, "near": 13.30, "mid": 2.65, "far": 2.37},
+                        "heldout_primary": {"psnr": 20.19}, "train_psnr": 22.81, "faces": 287708, "seconds": 200.4,
+                        "peak_vram_compute_mib": 3253, "peak_vram_smi_delta_mib": 5001, "mesh_sha256_16": "11b3fe963797bdd5",
+                        "reg_last": {"area_rel_S0": 1.000}, "reg_ref": {"S0_m2": 22.478, "B0": 716.2}}
+        },
+        "decision": {
+          "root_cause": {
+            "status": "upgraded_half_refuted_half",
+            "upgraded": "area term alone compresses full100 from 3.318x to 2.010x while PSNR rises 19.10 -> 19.37, chamfer falls 0.016629 -> 0.015202 (5.8x noise) and normals improve 53.67 -> 47.56 deg; inflation is caused by the missing area constraint, not by the photometric term per se",
+            "refuted": "the curvature term is not the same mechanism: area drops to 1.704x / 1.465x (below the 0-step 1.944x), chamfer worsens to 0.017062 / 0.018067 and sharp recall falls to 0.8065 / 0.7606; bending energy only shrinks and over-smooths",
+            "geometry_not_improved": "best F1 over the 5 cells is 0.7842 (r002_areg) <= 0.79, all below the 0-step 0.8056; every cell has sharp recall below 0.9357: the shell can be suppressed, but the geometry does not get better because of it"
+          },
+          "geometry_line_closed_in_this_harness": "yes; the geometric optimum of this objective sits at or next to the initial surface, so further lambda sweeps will not beat the initialisation; a new objective form (patch-based / visibility-weighted photometric term, shape prior) or a different representation/initialisation is required",
+          "no_config_beats_0_step": "true; F1 below 0.8056 in every cell. Chamfer is nominally better in 4 cells (0.0152-0.0157, 1.8-5.8x noise) but never alongside F1 or sharp-recall improvement, so it is not counted as geometric improvement",
+          "best_cell_vs_rgbw002": {"run": "r002_areg", "delta_area_x": -0.256, "delta_f1": 0.0206, "delta_chamfer": -0.000001,
+                                   "delta_sharp_precision": 0.0761, "delta_heldout_psnr_db": -0.08},
+          "region_finding": "the area term removes the far band first (2.46 -> 1.45 / 1.37, below the 0-step 2.46) and areg010 also trims opening 4.62 -> 3.57: over-deletion that costs recall; r002_areg is the closest to the 0-step distribution (-0.45 / +1.26 / -0.46 / -0.09)",
+          "no_further_sweep": "no additional cells were run after these 5; the result is recorded as a negative result"
+        },
+        "queue_and_gpu": {
+          "lock_policy": "flock -n -> check free >= 6300 MiB -> release immediately if short -> retry every 3 s",
+          "lock_acquired": "all 5 runs LOCK_OK waited=0s free=7895 MiB",
+          "note": "short hold only; the texture line keeps polling for 10500 MiB but never held the lock; no process killed, no concurrent run, no OOM",
+          "gpu_seconds_new_runs": 981.7,
+          "evaluation_seconds": "5 meshes ~55 s + region stats ~3 min (CPU/Blender, GPU idle)"
+        },
+        "invalid_runs": "none; all 5 runs exited 0 and produced mesh.ply and summary.json. One tmux redirection failed before the python process started (log parent directory did not exist), produced no artefacts, and was fixed by creating the directory first",
+        "noise_thresholds": "from 12.8.3 (2 seeds): f1 +-0.0014, chamfer +-0.000246, normal +-0.075 deg, sharp recall +-0.0020. PSNR has no 2-seed estimate, so sub-0.15 dB differences are reported without significance claims",
+        "boundary": ["self-built FlexiCubes harness + this GT-depth proxy SDF initialisation only; not a statement that nvdiffrec or ExMesh cannot reconstruct geometry",
+                     "proxy initialisation and evaluation GT share the same source (GT depth), which raises the F1 ceiling and is a competing explanation for not beating the initialisation",
+                     "area uses true triangle area 0.5*sum|cross|; S/S0 and area_x_input have different denominators (0 step = 1.944x input = 0.988 S0)",
+                     "curvature term is total bending energy sum|e|(1-cos theta), not per-vertex |kappa|; lambda depends on mesh density even after B0 normalisation",
+                     "single seed per cell; PSNR has no 2-seed estimate",
+                     "only rgb_weight 1.0 regularised plus one combined cell; no full rgb_weight x lambda grid"],
+        "evidence": {
+          "table": "outputs/step_regularize_20261105/reg_table.json",
+          "regions": "outputs/step_regularize_20261105/region_stats.json",
+          "eval": "outputs/step_regularize_20261105/eval_all/surface_metrics.json",
+          "eval_r002": "outputs/step_regularize_20261105/eval_r002/surface_metrics.json",
+          "logs": "outputs/step_regularize_20261105/logs"
+        }
+      },
       "arms": {
         "A": "Omega TSDF -> ExMesh",
         "B": "Omega TSDF -> Mesh Splatting",

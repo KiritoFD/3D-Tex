@@ -84,6 +84,10 @@ def parse_args():
     parser.add_argument("--corr-max-voxels", type=float, default=3.0)
     parser.add_argument("--corr-every", type=int, default=5)
     parser.add_argument("--l-dev-weight", type=float, default=0.1)
+    parser.add_argument("--area-weight", type=float, default=0.0,
+                        help="lambda on ((S/S0) - 1)^2; S is the extracted surface area")
+    parser.add_argument("--curv-weight", type=float, default=0.0,
+                        help="lambda on B/B0; B = sum_edges |e| * (1 - cos(dihedral))")
     parser.add_argument("--deform-fraction", type=float, default=0.25)
     parser.add_argument("--extract-only", action="store_true",
                         help="export the initialised iso-surface only: skips the random "
@@ -463,6 +467,36 @@ def extract(state):
     return vertices, faces.to(torch.int32).contiguous(), faces.long(), l_dev
 
 
+def face_normals_areas(vertices, faces):
+    """Unit face normals and true triangle areas."""
+    a = vertices[faces[:, 0]]
+    b = vertices[faces[:, 1]]
+    c = vertices[faces[:, 2]]
+    cross = torch.cross(b - a, c - a, dim=-1)
+    norm = cross.norm(dim=-1)
+    return cross / norm.clamp_min(1e-16)[:, None], 0.5 * norm
+
+
+def bending_energy(vertices, faces, face_normal):
+    """Discrete bending energy: sum over shared edges of |e| * (1 - cos dihedral)."""
+    e = torch.cat((faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]), dim=0)
+    owner = torch.arange(faces.shape[0], device=faces.device).repeat(3)
+    nv = vertices.shape[0]
+    key = torch.minimum(e[:, 0], e[:, 1]).to(torch.int64) * nv + \
+        torch.maximum(e[:, 0], e[:, 1]).to(torch.int64)
+    order = torch.argsort(key)
+    ordered = key[order]
+    pair = ordered[1:] == ordered[:-1]
+    if not bool(pair.any()):
+        return vertices.sum() * 0.0
+    n_src = face_normal[owner[order][:-1][pair]]
+    n_dst = face_normal[owner[order][1:][pair]]
+    edge = e[order][:-1][pair]
+    length = (vertices[edge[:, 0]] - vertices[edge[:, 1]]).norm(dim=-1)
+    cos = (n_src * n_dst).sum(-1).clamp(-1.0, 1.0)
+    return (length * (1.0 - cos)).sum()
+
+
 def evaluate_views(renderer, vertices, faces, normals, albedo, params, views, resolution):
     stats = []
     with torch.no_grad():
@@ -541,6 +575,7 @@ def main():
         params["sh_diffuse"][0] = 1.0 / s0.Y00
 
     history = []
+    reg_ref = {}
     if args.extract_only:
         print(f"[{args.run}] extract-only: no perturbation, no optimiser, "
               "no training loop", flush=True)
@@ -593,6 +628,13 @@ def main():
                        params["sh_diffuse"], params["sh_specular"], params["spec_gain"]]
         optimiser = torch.optim.Adam(optim_groups)
 
+        with torch.no_grad():
+            v_ref, _, f_ref, _ = extract(state)
+            n_ref, a_ref = face_normals_areas(v_ref, f_ref)
+            reg_ref = {"S0_m2": float(a_ref.sum()),
+                       "B0": float(bending_energy(v_ref, f_ref, n_ref))}
+        print(f"[{args.run}] regularisation reference {json.dumps(reg_ref)}", flush=True)
+
         corr_index = corr_target = None
         for iteration in range(args.iters):
             vertices, faces, faces_long, l_dev = extract(state)
@@ -622,6 +664,17 @@ def main():
                     delta = vertices[corr_index] - corr_target
                     loss = loss + args.corr_weight * (delta.pow(2).sum(-1).mean()
                                                       / args.voxel ** 2)
+            reg = {}
+            if args.area_weight:
+                _, face_area = face_normals_areas(vertices, faces_long)
+                area_rel = face_area.sum() / reg_ref["S0_m2"]
+                loss = loss + args.area_weight * (area_rel - 1.0) ** 2
+                reg["area_x"] = float(area_rel)
+            if args.curv_weight:
+                fnormal, _ = face_normals_areas(vertices, faces_long)
+                curv_rel = bending_energy(vertices, faces_long, fnormal) / reg_ref["B0"]
+                loss = loss + args.curv_weight * curv_rel
+                reg["curv_rel"] = float(curv_rel)
             optimiser.zero_grad(set_to_none=True)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(clip_params, 1.0)
@@ -632,9 +685,11 @@ def main():
                 history.append({"iter": iteration, "loss": float(loss),
                                 "faces": int(len(faces)),
                                 "vertices": int(len(vertices)),
+                                "reg": reg,
                                 "peak_mib": sampler.delta_mib})
                 print(f"[{args.run}] iter {iteration} loss {float(loss):.6f} "
-                      f"faces {len(faces)} peak {sampler.delta_mib} MiB", flush=True)
+                      f"faces {len(faces)} reg {json.dumps(reg)} "
+                      f"peak {sampler.delta_mib} MiB", flush=True)
 
     with torch.no_grad():
         vertices, faces_i32, faces, _ = extract(state)
@@ -670,7 +725,10 @@ def main():
         "correspondence": corr_stats,
         "losses": {k: float(v) for k, v in {
             "rgb_weight": args.rgb_weight, "sil_weight": args.sil_weight,
-            "corr_weight": args.corr_weight, "l_dev_weight": args.l_dev_weight}.items()},
+            "corr_weight": args.corr_weight, "l_dev_weight": args.l_dev_weight,
+            "area_weight": args.area_weight,
+            "curv_weight": args.curv_weight}.items()},
+        "regularization_ref": reg_ref,
         "albedo": {"mode": args.albedo_mode, "color_res": args.color_res,
                    "color_rank": args.color_rank if args.albedo_mode == "lowrank" else None},
         "train_render": train_stats, "heldout_primary_render": heldout_stats,
