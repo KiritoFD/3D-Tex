@@ -527,6 +527,82 @@
         },
         "next": "Level 4 not started; the SDF initialisation must be fixed before the method itself can be judged"
       },
+      "step_init_2x2": {
+        "date": "2026-11-05",
+        "doc_section": "docs/experiments/72H_GEOMETRY.md #12.9",
+        "purpose": "separate pure 0-step initialisation from 100-step optimisation on a VGGT mesh and a GT-depth proxy mesh; retention relative to each input is the acceptance unit",
+        "code_changes": {
+          "extract_only": "--extract-only skips the sdf/weights/deform perturbation, the optimiser and the training loop; summary mode=extract_only, iters=0",
+          "sign_field": "TriangleSDF: exact point-to-nearest-triangle distance over a k=8 centroid shortlist; sign from the closest face normal; closest points on open edges are flagged unreliable; no watertight remeshing",
+          "visibility": "carved / observed / unknown split; background pixels carve, foreground pixels never delete, out-of-frustum voxels keep the surface sign"
+        },
+        "superseded": "init_sA (1 Adam step + random perturbation) is no longer a 0-step reference; its numbers stay in #12.8",
+        "inputs": {
+          "vggt": {"path": "outputs/geometry_pruning/eval_carve_v35c30_conf/carve_v35c30/mesh.ply",
+                   "sha256_16": "ecf994efd40a5d9c", "f1": 0.6315, "chamfer": 0.012580,
+                   "normal_mean_deg": 50.44, "sharp_precision": 0.3395, "sharp_recall": 0.6935,
+                   "area": 30.685, "components": 3781, "boundary_edges": 55397},
+          "proxy": {"path": "data/scenes/nerf_lego_gt16/mesh/mesh_init.ply",
+                    "sha256_16": "e4006a146e8ae5d6", "f1": 0.9358, "chamfer": 0.003859,
+                    "normal_mean_deg": 38.94, "sharp_precision": 0.7688, "sharp_recall": 0.9404,
+                    "area": 22.851, "components": 1152, "boundary_edges": 30964}
+        },
+        "cells": {
+          "vggt_e0": {"f1": 0.6075, "chamfer": 0.020025, "normal_mean_deg": 51.16,
+                      "sharp_precision": 0.3881, "sharp_recall": 0.6458, "area": 47.73,
+                      "components": 1, "boundary_edges": 0, "faces": 302544,
+                      "distance_to_input_voxel": {"p50": 1.17, "p90": 11.64, "max": 28.9},
+                      "f1_retention": 0.962, "seconds": 160.8, "peak_torch_mib": 1847},
+          "vggt_e100": {"f1": 0.5843, "chamfer": 0.020247, "normal_mean_deg": 54.11,
+                        "sharp_precision": 0.2563, "sharp_recall": 0.8357, "area": 84.39,
+                        "components": 3, "boundary_edges": 0, "faces": 571032,
+                        "distance_to_input_voxel": {"p50": 1.73, "p90": 8.88, "max": 29.1},
+                        "f1_retention": 0.925, "seconds": 190.5, "peak_torch_mib": 3570,
+                        "heldout_primary": {"psnr": 17.99, "silhouette_iou": 0.9475}},
+          "proxy_e0": {"f1": 0.8056, "chamfer": 0.016142, "normal_mean_deg": 48.60,
+                       "sharp_precision": 0.6945, "sharp_recall": 0.9357, "area": 44.43,
+                       "components": 4, "boundary_edges": 0, "faces": 257476,
+                       "distance_to_input_voxel": {"p50": 1.23, "p90": 12.23, "max": 27.3},
+                       "f1_retention": 0.861, "seconds": 146.0, "peak_torch_mib": 1842},
+          "proxy_e100": {"f1": 0.6647, "chamfer": 0.016629, "normal_mean_deg": 53.67,
+                         "sharp_precision": 0.3608, "sharp_recall": 0.8556, "area": 75.82,
+                         "components": 2, "boundary_edges": 0, "faces": 501268,
+                         "distance_to_input_voxel": {"p50": 1.80, "p90": 8.81, "max": 27.0},
+                         "f1_retention": 0.710, "seconds": 175.4, "peak_torch_mib": 3423,
+                         "heldout_primary": {"psnr": 19.10, "silhouette_iou": 0.9592}}
+        },
+        "sign_field_diagnostic_g160": {
+          "voxels": 4173281,
+          "vggt": {"unknown_fraction": 0.00079, "carved_fraction": 0.9165,
+                   "hull_fraction": 0.0835, "unreliable_fraction": 0.559,
+                   "unreliable_in_hull": 0.290, "carved_but_normal_inside": 0.302},
+          "proxy": {"unknown_fraction": 0.00102, "carved_fraction": 0.9172,
+                    "hull_fraction": 0.0828, "unreliable_fraction": 0.412,
+                    "unreliable_in_hull": 0.242, "carved_but_normal_inside": 0.163}
+        },
+        "decision": {
+          "row": 3,
+          "label": "proxy 0-step normal, 100-step degrades -> objective / regularisation / parameterisation",
+          "rejected": {
+            "row1": "both 0-step steps keep 96% / 86% of input F1; the common inflation is real but not fatal",
+            "row2": "VGGT 0-step retains 96.2% F1 and +59% Chamfer, smaller relative damage than the proxy (+318%)",
+            "row4": "proxy degrades 17.5% F1 and halves sharp precision after 100 steps"
+          },
+          "attribution": "initialisation implementation is no longer the dominant cause; 100-step optimisation damages both rows (F1, sharp precision and area all move the wrong way)",
+          "next": "separate RGB / silhouette / colour-field degrees of freedom (freeze colour, RGB-off, smaller colour grid / no specular) before further sign-field work"
+        },
+        "evidence": {
+          "stats": "outputs/step_init_20261105/init2x2_stats.json",
+          "sign_diag": "outputs/step_init_20261105/sign_diag.json",
+          "eval": ["outputs/step_init_20261105/eval_part1/surface_metrics.json",
+                   "outputs/step_init_20261105/eval_part2/surface_metrics.json",
+                   "outputs/step_init_20261105/eval_part3/surface_metrics.json"],
+          "logs": "outputs/step_init_20261105/logs"
+        },
+        "invalid_runs": ["none; smoke_proxy_g64 and smoke_vggt_g64 are grid-64 code-path checks and do not enter the table"],
+        "resource": {"gpu_used_before_mib": [2671, 2245], "peak_torch_mib": 3570,
+                     "peak_smi_delta_mib": 7072, "evaluator_blender": "/root/deps/blender/blender-3.3.9-linux-x64/blender"}
+      },
       "arms": {
         "A": "Omega TSDF -> ExMesh",
         "B": "Omega TSDF -> Mesh Splatting",
