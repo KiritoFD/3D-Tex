@@ -1076,6 +1076,72 @@
           "logs": "outputs/step_regularize_20261105/logs"
         }
       },
+      "step_reg_vggt_20261105": {
+        "date": "2026-11-05",
+        "doc_section": "docs/experiments/72H_GEOMETRY.md#1214",
+        "purpose": "exclude the competing explanation recorded in 12.13.6: the GT-depth proxy initialisation shares its source with the evaluation GT and raises the F1 ceiling, so failing to beat the 0 step could be an initialisation artefact rather than a property of the objective",
+        "pre_registration": {
+          "written_before_run": true,
+          "anchor": "same VGGT input 0 step only: f1 0.607472, chamfer 0.020024646, area_x_input 1.555 (47.726/30.685 same convention), normal 51.158 deg, sharp 0.388136/0.645848",
+          "noise": "f1 +-0.0014, chamfer +-0.000246, normal +-0.075 deg (section 12.8.3)",
+          "rule_A": "f1 >= 0.6089 -> objective can improve geometry, the proxy same-source claim was an artefact, do not close, reopen the full comparison",
+          "rule_B": "|dF1| <= 0.0014 or lower, but area/chamfer/normal better -> objective constrains shape but does not lift f1; stays closed with the limitation recorded",
+          "rule_C": "f1 <= 0.6059 with no area/chamfer/normal gain -> the objective has no gain on VGGT initialisation either; closure is upgraded to the objective form",
+          "expected": "B, because an area regulariser compresses shell inflation but adds no localisation ability"
+        },
+        "setup": {
+          "input": "VGGT mesh outputs/geometry_pruning/eval_carve_v35c30_conf/carve_v35c30/mesh.ply (sha256_16 ecf994efd40a5d9c), not the proxy mesh",
+          "config": "identical to areg010: grid_res 160, iters 100, render 256, 16 GT cameras, 64^3 albedo + SH, rgb 1.0, sil 0.5, corr 0.02, dev 0.1, area 0.10, curv 0, seed 20261105, frozen voxel",
+          "correspondence": "rebuilt on this mesh (corr_index are vertex indices); 29 pairs, 1281 raw matches, 246 candidates, 217 accepted points, median reprojection 0.43 px",
+          "regularisation_ref": {"S0_m2": 24.310089111328125, "B0": 967.2818603515625},
+          "artefacts": "outputs/step_reg_vggt_20261105/areg010_vggt"
+        },
+        "run": {
+          "areg010_vggt": {"rgb_weight": 1.0, "area_weight": 0.1, "curv_weight": 0.0, "color_res": 64, "iters": 100,
+                           "f1": 0.6048612767592668, "precision": 0.51366, "recall": 0.73544,
+                           "chamfer": 0.01881086871405216, "normal_mean_deg": 48.30039238260078,
+                           "sharp_precision": 0.31916885061774614, "sharp_recall": 0.7667870036101083,
+                           "area_true_m2": 24.792843934595904, "area_x_input": 1.6159340673150095,
+                           "area_rel_S0_last": 1.0197018384933472, "faces": 337212, "seconds": 223.24155592918396,
+                           "peak_vram_compute_mib": 3277, "peak_vram_smi_delta_mib": 5009,
+                           "heldout_primary": {"psnr": 18.89086103439331, "silhouette_iou": 0.9599448083203983},
+                           "train_psnr": 21.728206157684326, "mesh_sha256_16": "61f70dc80916fd4f",
+                           "region": {"opening": 5.29, "near": 15.22, "mid": 2.67, "far": 1.61}}
+        },
+        "reference": {
+          "vggt_e0": {"run": "outputs/step_init_20261105/vggt_e0", "f1": 0.607472, "chamfer": 0.020024646,
+                      "normal_mean_deg": 51.1584, "sharp_precision": 0.388136, "sharp_recall": 0.645848,
+                      "area_true_m2": 23.86323244082175, "area_x_input": 1.5553443711058912, "faces": 302544,
+                      "region": {"opening": 4.99, "near": 13.06, "mid": 3.41, "far": 2.39},
+                      "input_area_true_m2": 15.342732377559805},
+          "vggt_e100": {"run": "outputs/step_init_20261105/vggt_e100", "f1": 0.49152250439627404,
+                        "chamfer": 0.026650215562886787, "normal_mean_deg": 53.60644219655171,
+                        "sharp_precision": 0.17609756097560975, "sharp_recall": 0.8231046931407943}
+        },
+        "decision": {
+          "outcome": "B",
+          "statement": "the objective constrains shape but does not lift F1; the closure in 12.13.9 is kept and now holds for both initialisations",
+          "f1_vs_init": "-0.002611 (1.9x noise)"
+        },
+        "queue_and_gpu": {
+          "lock_policy": "flock -n -> free >= 5120 MiB -> release immediately if short -> retry every 3 s",
+          "lock_acquired": "LOCK_OK waited=36s free=7895 MiB (waited on the texture line proxy rerun)",
+          "note": "short hold only; no process killed, no concurrent run, no OOM",
+          "seconds_new_run": 223.24155592918396,
+          "evaluation_seconds": "1 mesh ~10 s + region stats ~50 s"
+        },
+        "invalid_runs": "none; EXIT=0 and mesh.ply + summary.json produced. SSH was unreachable for ~7 min after the run (kex_exchange_identification) and the evaluation was rerun after reconnect; the run itself was already complete inside tmux",
+        "boundary": ["one cell only; no lambda or rgb_weight sweep on the VGGT initialisation",
+                     "single seed; heldout PSNR 18.89 dB has no 2-seed estimate",
+                     "VGGT input is the VGGT-depth + GT-foreground-mask carve (carve_v35c30) while evaluation GT is rendered GT depth: different source, but GT masks took part in the carve, so this is a partial exclusion rather than a fully independent benchmark",
+                     "region decomposition is recomputed against the VGGT input for both meshes, because the earlier region_stats.json used the proxy input"],
+        "evidence": {
+          "run": "outputs/step_reg_vggt_20261105/areg010_vggt",
+          "eval": "outputs/step_reg_vggt_20261105/eval/surface_metrics.json",
+          "regions": "outputs/step_reg_vggt_20261105/region_stats_vggt.json",
+          "logs": "outputs/step_reg_vggt_20261105/logs"
+        }
+      },
       "arms": {
         "A": "Omega TSDF -> ExMesh",
         "B": "Omega TSDF -> Mesh Splatting",
