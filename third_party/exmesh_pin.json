@@ -1,0 +1,21 @@
+{
+  "name": "ExMesh",
+  "upstream_url": "https://github.com/Fan-Treasure/ExMesh",
+  "commit": "2cecbe513a0e2e021cd5cab509761ddc458ee526",
+  "commit_date": "2026-10-28T16:38:40+08:00",
+  "tree": "84e8b03d390117de3a849f0704d9e877529d462d",
+  "license": "Apache-2.0 (LICENSE.md)",
+  "vendored_path": "third_party/exmesh",
+  "vendored_files": 1633,
+  "vendored_bytes_approx": 27262976,
+  "pristine": true,
+  "git_metadata_included": false,
+  "local_patches": [
+    "third_party/exmesh_patches/0001-train-mask-resize.patch"
+  ],
+  "notes": [
+    "vendored copy exported with `git archive` from the commit above; no upstream file was edited",
+    "patch 0001 fixes train.py mask resize under -r (see docs/EXMESH_ADAPTER.md section 2.2) and must be applied at runtime",
+    "upstream was cloned to /root/deps/ExMesh outside this repository; that working copy has patch 0001 applied and is not part of the deliverable"
+  ]
+}

@@ -1,0 +1,13 @@
+diff --git a/train.py b/train.py
+index e005986..dd7ab86 100644
+--- a/train.py
++++ b/train.py
+@@ -157,6 +157,8 @@ def training(
+             img_name = viewpoint_cam.image_name
+             mask_path = os.path.join(dataset.source_path, "train_mask", f"{img_name}_gtmask.png")
+             gt_mask_pil = Image.open(mask_path).convert("L")
++            # PATCH(3D-Tex): masks are stored at source resolution; loadCam resizes images to -r.
++            gt_mask_pil = gt_mask_pil.resize((image.shape[-1], image.shape[-2]), Image.NEAREST)
+             gt_mask = torchvision.transforms.functional.to_tensor(gt_mask_pil).squeeze(0).to(image.device)
+         
+         rend_depth = render_pkg["rend_depth"].squeeze(0)  # (H, W)
