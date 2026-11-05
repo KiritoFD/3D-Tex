@@ -603,6 +603,77 @@
         "resource": {"gpu_used_before_mib": [2671, 2245], "peak_torch_mib": 3570,
                      "peak_smi_delta_mib": 7072, "evaluator_blender": "/root/deps/blender/blender-3.3.9-linux-x64/blender"}
       },
+      "step_grid256": {
+        "date": "2026-11-05",
+        "doc_section": "docs/experiments/72H_GEOMETRY.md #12.10",
+        "purpose": "test whether the section 12.9 damage (area inflation, Chamfer degradation) is limited by the grid-160 quantisation cap or by the 100-step objective",
+        "code_changes": {
+          "host_lattice": "grid_res >= 200 builds the FlexiCubes lattice with FlexiCubes(device='cpu').construct_voxel_grid and moves grid/cubes to CUDA; res <= 160 keeps the previous GPU path so the #12.9 numbers stay reproducible",
+          "equivalence": "cubes bit-identical to the GPU build at res 16/32/64/128; grid coordinates differ by at most 5.96e-8 (1.5e-5 of a cell)"
+        },
+        "cell_size": {
+          "metric_voxel": 0.01150144350298549,
+          "proxy": {"scale": 2.58256, "cell_g160": 0.016141, "cell_g160_voxels": 1.403,
+                    "cell_g256": 0.010088, "cell_g256_voxels": 0.877},
+          "vggt": {"scale": 2.56827, "cell_g160": 0.016052, "cell_g160_voxels": 1.396,
+                   "cell_g256": 0.010032, "cell_g256_voxels": 0.872}
+        },
+        "cells": {
+          "proxy_e0_g160": {"grid": 160, "f1": 0.80555, "chamfer": 0.016142, "area": 44.425,
+                            "components": 4, "faces": 257476, "seconds": 146.0,
+                            "peak_torch_mib": 1842, "smi_delta_mib": 3111,
+                            "distance_to_input_voxel": {"p50": 1.23, "p90": 12.23, "max": 27.3},
+                            "f1_retention": 0.861, "chamfer_x_input": 4.18, "area_x_input": 1.944},
+          "proxy_e0_g256": {"grid": 256, "f1": 0.80523, "chamfer": 0.015712, "area": 50.256,
+                            "components": 5, "faces": 741016, "seconds": 1108.1,
+                            "peak_torch_mib": 6455, "smi_delta_mib": 6995,
+                            "mesh_sha256_16": "5088aeae288fc9f0",
+                            "distance_to_input_voxel": {"p50": 1.41, "p90": 11.96, "max": 27.33},
+                            "f1_retention": 0.860, "chamfer_x_input": 4.07, "area_x_input": 2.199},
+          "vggt_e0_g160": {"grid": 160, "f1": 0.60747, "chamfer": 0.020025, "area": 47.726,
+                           "components": 1, "faces": 302544, "seconds": 160.8,
+                           "peak_torch_mib": 1847, "smi_delta_mib": 2819,
+                           "distance_to_input_voxel": {"p50": 1.17, "p90": 11.64, "max": 28.9},
+                           "f1_retention": 0.962, "chamfer_x_input": 1.59, "area_x_input": 1.556},
+          "vggt_e0_g256": {"grid": 256, "f1": 0.60719, "chamfer": 0.020060, "area": 55.317,
+                           "components": 10, "faces": 877852, "seconds": 1182.1,
+                           "peak_torch_mib": 6460, "smi_delta_mib": 6977,
+                           "mesh_sha256_16": "cabbc2886545a2f8",
+                           "distance_to_input_voxel": {"p50": 1.27, "p90": 11.08, "max": 29.14},
+                           "f1_retention": 0.962, "chamfer_x_input": 1.59, "area_x_input": 1.803}
+        },
+        "delta_256_minus_160": {
+          "proxy": {"f1": -0.00033, "chamfer": -0.00043, "area": 5.831, "faces": 483540, "components": 1},
+          "vggt": {"f1": -0.00028, "chamfer": 0.000035, "area": 7.591, "faces": 575308, "components": 9}
+        },
+        "decision": {
+          "verdict": "not a resolution problem",
+          "evidence": [
+            "both inputs change F1 by -0.0003, inside the +-0.0014 noise floor",
+            "proxy Chamfer improves by 0.00043 (3.5% of the input-to-0-step degradation); VGGT Chamfer gets slightly worse",
+            "area inflation grows with resolution (proxy 1.94x -> 2.20x, VGGT 1.56x -> 1.80x)",
+            "sharp precision degrades on both inputs at res 256"
+          ],
+          "next": "return to the supervision ablation (RGB / silhouette / colour-field degrees of freedom), not to grid resolution"
+        },
+        "not_run": {
+          "proxy_e100_g256": {"status": "skipped: insufficient VRAM",
+                              "reason": "0-step g256 already needs a 6995 MiB SMI delta inside a 7523 MiB free window (other tenants hold 15314 + 1698 MiB, not killed); Adam states add about 3.3 GB, i.e. roughly 10.3 GB total"}
+        },
+        "invalid_runs": [
+          "19 OOM attempts, all inside construct_voxel_grid (16 wait-loop retries 14:41-15:00 plus 3 manual runs); other tenants held 15.3 GB + 1.7 GB and the free window (5.8-7.5 GB) was below the 7-8 GB transient requirement; no mesh was produced",
+          "the retry traces were overwritten when the successful rerun reused logs/proxy_e0_g256.log; logs/wait_g256.log keeps the 20 free-memory samples"
+        ],
+        "evidence": {
+          "stats": "outputs/step_grid256_20261105/grid256_stats.json",
+          "eval": "outputs/step_grid256_20261105/eval/surface_metrics.json",
+          "summaries": ["outputs/step_grid256_20261105/proxy_e0_g256/summary.json",
+                        "outputs/step_grid256_20261105/vggt_e0_g256/summary.json"],
+          "logs": "outputs/step_grid256_20261105/logs"
+        },
+        "resource": {"gpu_used_before_mib": 17041, "peak_torch_mib": 6460,
+                     "peak_smi_delta_mib": 6995, "evaluator_blender": "/root/deps/blender/blender-3.3.9-linux-x64/blender"}
+      },
       "arms": {
         "A": "Omega TSDF -> ExMesh",
         "B": "Omega TSDF -> Mesh Splatting",
