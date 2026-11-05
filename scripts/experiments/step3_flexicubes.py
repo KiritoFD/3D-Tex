@@ -399,7 +399,19 @@ def observation_status(points, views, resolution):
 
 def build_sdf_grid(mesh, surface, grid_res, deform_fraction, views, resolution):
     flexicubes = FlexiCubes(device="cuda")
-    grid, cubes = flexicubes.construct_voxel_grid(grid_res)
+    if grid_res >= 200:
+        # construct_voxel_grid does an 8-corner-per-cube torch.unique: at res 256
+        # that needs ~7 GB of transient device memory and OOMs whenever another
+        # tenant holds the card.  Build the identical lattice on the host and
+        # move only the result; the branch is gated so res 160 keeps its old code
+        # path and its published numbers stay reproducible.
+        host_flexicubes = FlexiCubes(device="cpu")
+        grid, cubes = host_flexicubes.construct_voxel_grid(grid_res)
+        grid = grid.to("cuda")
+        cubes = cubes.to("cuda")
+        del host_flexicubes
+    else:
+        grid, cubes = flexicubes.construct_voxel_grid(grid_res)
     vertices = mesh["vertices_np"]
     low, high = vertices.min(0), vertices.max(0)
     center = (low + high) / 2
