@@ -399,7 +399,7 @@ vggt 行复用 B1 的 `glb_bf16/supra_vggt_v0_s42_bf16_no_remesh.glb`（与 §2 
 | T0 指定相机 | 已实现未运行 | `texture_fixed_mesh.py --cam-indices`（与 `--max-cams` 互斥，越界即报错，frames 记入 summary） |
 | 逐条目参考视角评测 | 已实现未运行 | `tex_t1_eval.py --ref-view name=N --mra-ref name=path` + `mra_input_*` 材质对照字段 |
 | 同规格评测脚本 | 已运行 | `scripts/experiments/tex_t1_eval_same_spec.sh`（§8 的产物即来自它） |
-| 磁盘预算 | 通过 | fp32 预计新增 ≈4×(60–100 MB GLB + 渲染缓存)，远端可用 87 GB |
+| 磁盘预算 | 通过 | fp32 预计新增 ≈4×(60–100 MB GLB + 渲染缓存)；2026-11-12 起整个 checkout 位于 4090 的 `/root/Workspace/xy/3dtex`（3.5 TB Workspace 盘，余 1.1 TB），`/root/3dtex` 为兼容符号链接 |
 
 同步记录（2026-11-12）：
 

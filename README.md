@@ -2,6 +2,14 @@
 
 **Research goal: multi-view RGB → VGGT-Ω cameras/depth → surface Mesh → UV atlas → faithful textures (optional PBR). No 3D Gaussian stage.**
 
+> **Runtime location (2026-11-12):** on the 4090 host the entire checkout — code, `data/`,
+> `outputs/`, `models/`, vendored `third_party/` (31 GB) — lives at
+> **`/root/Workspace/xy/3dtex`** on the 3.5 TB Workspace disk (sibling of `xy/DiT`).
+> `/root/3dtex` is a compatibility symlink to it, so every hardcoded script path and the
+> `ssh://4090/root/3dtex` git remote keep working. The system partition stays for
+> `/opt/conda` envs and OS only. Migration verified by file count (15,076 = 15,076),
+> `git fsck`, and weight sha256 against the manifest in [docs/experiments/TEX_T1_SUPRA.md](docs/experiments/TEX_T1_SUPRA.md) §6.
+>
 > **Quality correction (2026-11-02):** Foreground filtering, TSDF unknown boundaries, per-view ExMesh calibration and UV indexing have been corrected. See [PIPELINE_FIXES.md](docs/PIPELINE_FIXES.md) for the new lego artifacts and limits.
 >
 > **Status (2026-11-02):** the A0 path **now runs end to end** on ETH3D `kicker`:
