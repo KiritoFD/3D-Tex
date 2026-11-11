@@ -15,3 +15,20 @@ deliverables/*
 
 # Local ssh sync archives (transport only, never versioned)
 _sync_*.tar.gz
+third_party/_*.tgz
+third_party/_*.tar
+
+# Session scratch (ad-hoc debug scripts/archives; delete after use, never versioned)
+.tmp_*
+tmp/
+
+# Runtime-only paths that exist on the 4090 host but are never versioned:
+# weights are re-fetched by scripts/experiments/tex_t1_weights.sh,
+# lock/vram sampling files and third-party build artifacts stay local.
+/models/
+/.locks/
+/logs/
+third_party/_ext/
+# Hunyuan3D-2.1 is kept as an upstream clone (with .git) outside version control;
+# pinned at commit 82920d643c0dc2f7bfd7255f45f62d386edfe60c — see docs/UPSTREAMS.md
+third_party/hunyuan3d/

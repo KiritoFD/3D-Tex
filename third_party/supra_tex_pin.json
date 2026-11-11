@@ -1,0 +1,25 @@
+{
+  "name": "SUPRA-Tex (supra-tex)",
+  "upstream_url": "https://github.com/Supra-3D/supra-tex",
+  "commit": "cee4435652d0f23737bd28d5704e0fae9830b411",
+  "commit_subject": "Refresh local Gradio UI and demo examples",
+  "tree": null,
+  "license": "MIT (LICENSE) + THIRD_PARTY_NOTICES.md retained in vendored copy",
+  "vendored_path": "third_party/supra_tex",
+  "pristine": "except third_party/supra_tex_patches/0001 (applied)",
+  "git_metadata_included": false,
+  "local_patches": [
+    "third_party/supra_tex_patches/0001-env-switches-and-bf16-bypass.patch"
+  ],
+  "verification": [
+    "2026-11-12: working copy diffed against a fresh upstream clone at cee4435 — exactly 3 source files differ (supratex/inference/mesh_export.py, supratex/inference/pipeline.py, supratex/pipelines/observation_guided_completion.py); all captured in patch 0001",
+    "2026-11-12: per-file sha256 comparison local vendored copy vs remote working copy (/root/3dtex/third_party/supra_tex): all common files identical; remote-only extras are runtime build artifacts (deployment/runtime/moge/build/*), remote working copy is missing assets/ (54 MB, dropped during an earlier tar sync) while the vendored copy is complete",
+    "patch 0001 content: (a) mesh_export.py — SUPRATEX_NO_REMESH / SUPRATEX_SKIP_SIMPLIFY env switches used by the B1 MODE paths; (b) pipeline.py — SUPRATEX_ABI_IGNORE used to skip the ABI dtype check for the bf16 config; (c) observation_guided_completion.py — SUPRATEX_FORCE_BF16 checkpoint cast to per-module target dtype (see docs/experiments/TEX_T1_SUPRA.md section 3)",
+    "weights are NOT vendored: models/supra_tex + models/trellis2 are fetched by scripts/experiments/tex_t1_weights.sh (HF mirror); sha256 records live in docs/experiments/TEX_T1_SUPRA.md section 6"
+  ],
+  "used_by": [
+    "scripts/experiments/tex_t1_run.sh (fp32 main arm)",
+    "scripts/experiments/tex_t1_vggt_b1.sh (bf16 arms)",
+    "scripts/experiments/tex_t1_vggt_base2048.sh (same-spec 2048 arm)"
+  ]
+}

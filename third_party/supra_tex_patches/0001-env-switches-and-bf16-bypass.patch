@@ -1,0 +1,106 @@
+diff --git a/supratex/inference/mesh_export.py b/supratex/inference/mesh_export.py
+index a23c3b3..f37c598 100644
+--- a/supratex/inference/mesh_export.py
++++ b/supratex/inference/mesh_export.py
+@@ -8,6 +8,7 @@ O-Voxel package; only texture conversion and gap filling are adapted here.
+ """
+ from typing import *
+ from tqdm import tqdm
++import os
+ import numpy as np
+ import torch
+ from PIL import Image
+@@ -169,9 +170,12 @@ def to_glb(
+         print("Cleaning mesh...")
+     
+     # --- Branch 1: Standard Pipeline (Simplification & Cleaning) ---
++    if os.environ.get("SUPRATEX_NO_REMESH") == "1":
++        remesh = False
+     if not remesh:
+         # Step 1: Aggressive simplification (3x target)
+-        mesh.simplify(decimation_target * 3, verbose=verbose)
++        if os.environ.get("SUPRATEX_SKIP_SIMPLIFY") != "1":
++            mesh.simplify(decimation_target * 3, verbose=verbose)
+         if verbose:
+             print(f"After inital simplification: {mesh.num_vertices} vertices, {mesh.num_faces} faces")
+         
+@@ -184,7 +188,8 @@ def to_glb(
+             print(f"After initial cleanup: {mesh.num_vertices} vertices, {mesh.num_faces} faces")
+             
+         # Step 3: Final simplification to target count
+-        mesh.simplify(decimation_target, verbose=verbose)
++        if os.environ.get("SUPRATEX_SKIP_SIMPLIFY") != "1":
++            mesh.simplify(decimation_target, verbose=verbose)
+         if verbose:
+             print(f"After final simplification: {mesh.num_vertices} vertices, {mesh.num_faces} faces")
+         
+@@ -220,7 +225,8 @@ def to_glb(
+             print(f"After remeshing: {mesh.num_vertices} vertices, {mesh.num_faces} faces")
+         
+         # Simplify and clean the remeshed result (similar logic to above)
+-        mesh.simplify(decimation_target, verbose=verbose)
++        if os.environ.get("SUPRATEX_SKIP_SIMPLIFY") != "1":
++            mesh.simplify(decimation_target, verbose=verbose)
+         if verbose:
+             print(f"After simplifying: {mesh.num_vertices} vertices, {mesh.num_faces} faces")
+     
+diff --git a/supratex/inference/pipeline.py b/supratex/inference/pipeline.py
+index 91befdb..2ab4938 100644
+--- a/supratex/inference/pipeline.py
++++ b/supratex/inference/pipeline.py
+@@ -63,7 +63,9 @@ def load_contract(model_config: str | Path, checkpoint: str | Path) -> tuple[dic
+         raise ValueError("model config must select InterleavedFlowTransformer")
+     if int(dataset.get("resolution", -1)) != RESOLUTION or dataset.get("attrs") != ["base_color", "metallic", "roughness", "alpha"]:
+         raise ValueError("model config must describe 1024 base-color/metallic/roughness/alpha inputs")
+-    mismatched = {key: args.get(key) for key, expected in MODEL_ABI.items() if args.get(key) != expected}
++    ignore = set(filter(None, os.environ.get("SUPRATEX_ABI_IGNORE", "").split(",")))
++    mismatched = {key: args.get(key) for key, expected in MODEL_ABI.items()
++                  if key not in ignore and args.get(key) != expected}
+     if mismatched:
+         raise ValueError(f"model config does not match the released completion ABI: {mismatched}")
+     if dataset.get("bridge_z_obs_args", {}).get("partial_support_mode") != "partial_messages":
+diff --git a/supratex/pipelines/observation_guided_completion.py b/supratex/pipelines/observation_guided_completion.py
+index 60fc956..68f5e6d 100644
+--- a/supratex/pipelines/observation_guided_completion.py
++++ b/supratex/pipelines/observation_guided_completion.py
+@@ -1,6 +1,7 @@
+ """Strict native-checkpoint inference for static-O Interleaved flow transformer texture flow."""
+ from __future__ import annotations
+ 
++import os
+ from contextlib import nullcontext
+ from typing import Any, Mapping
+ 
+@@ -23,12 +24,23 @@ def build_completion_model(
+     which checks the released model ABI and normalization statistics.
+     """
+     args = dict(config['models']['denoiser']['args'])
++    force_bf16 = os.environ.get('SUPRATEX_FORCE_BF16') == '1'
+     # The inference loader already places checkpoint tensors on the target
+     # device. A meta shell avoids allocating/initializing a second full model
+     # and copying its weights through CPU memory before moving it back to CUDA.
+     with torch.device('meta') if assign_weights else nullcontext():
+         model = InterleavedFlowTransformer(**args)
+     target = model.state_dict()
++    if force_bf16:
++        # 旁路臂：把 checkpoint 张量对齐到目标模块自身 dtype（仅 blocks 为 bf16，
++        # 其余 torso 仍按官方设计保持 fp32），避免 assign=True 载入后 dtype 不符。
++        state_dict = {
++            key: (value.to(target[key].dtype)
++                  if key in target and isinstance(value, torch.Tensor)
++                  and value.is_floating_point() and target[key].dtype.is_floating_point
++                  else value)
++            for key, value in state_dict.items()
++        }
+     missing = sorted(set(target) - set(state_dict))
+     unexpected = sorted(set(state_dict) - set(target))
+     invalid = sorted(
+@@ -36,7 +48,7 @@ def build_completion_model(
+         if not isinstance(state_dict[key], torch.Tensor)
+         or state_dict[key].is_meta
+         or state_dict[key].shape != target[key].shape
+-        or state_dict[key].dtype != target[key].dtype
++        or (state_dict[key].dtype != target[key].dtype and key not in _NORMALIZATION_KEYS)
+     )
+     if missing or unexpected or invalid:
+         raise RuntimeError(
