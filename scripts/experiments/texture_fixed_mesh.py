@@ -566,6 +566,9 @@ def main():
     ap.add_argument("--min-cos", type=float, default=0.2)
     ap.add_argument("--occ-tol-vox", type=float, default=2.0)
     ap.add_argument("--max-cams", type=int, default=0, help="冒烟用：限制训练相机数")
+    ap.add_argument("--cam-indices", default="",
+                    help="逗号分隔的训练相机索引（如 0,4,8）；与 --max-cams 互斥。"
+                         "单参考视角扫描（Tex-T1 多视图条件准备）用它指定唯一参考相机")
     ap.add_argument("--max-heldout", type=int, default=0)
     ap.add_argument("--no-render", action="store_true")
     ap.add_argument("--check-train", type=int, default=0, help="在训练视角做投影自检，取前 N 个")
@@ -598,6 +601,15 @@ def main():
     train_imgs, _ = load_images(train_cams, SCENE_DIR / "images", device)
     held_cams = load_cameras(HELDOUT_DIR / "cameras.json")
     held_imgs, held_alphas = load_images(held_cams, HELDOUT_DIR / "images", device)
+    if args.max_cams and args.cam_indices:
+        raise ValueError("--max-cams 与 --cam-indices 不能同时给出（选择规则会含混）")
+    if args.cam_indices:
+        idx = [int(x) for x in str(args.cam_indices).split(",") if x.strip()]
+        missing = [i for i in idx if not (0 <= i < len(train_cams))]
+        if missing:
+            raise ValueError(f"--cam-indices 越界: {missing}（共 {len(train_cams)} 个训练相机）")
+        train_cams = [train_cams[i] for i in idx]
+        train_imgs = [train_imgs[i] for i in idx]
     if args.max_cams:
         train_cams, train_imgs = train_cams[:args.max_cams], train_imgs[:args.max_cams]
     if args.max_heldout:
@@ -607,7 +619,9 @@ def main():
 
     resolutions = [int(x) for x in str(args.atlas).split(",")]
     variant_names = [x.strip() for x in args.variants.split(",") if x.strip()]
-    summary = {"train_cameras": len(train_cams), "heldout_cameras": len(held_cams),
+    summary = {"train_cameras": len(train_cams),
+               "train_cam_frames": [c["frame"] for c in train_cams],
+               "heldout_cameras": len(held_cams),
                "meshes": {}, "runs": []}
 
     for mesh_name in [x.strip() for x in args.meshes.split(",") if x.strip()]:

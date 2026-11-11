@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 
 import numpy as np
@@ -134,6 +135,11 @@ def main() -> None:
     ap.add_argument("--t0-dir", default=str(OUT / "t0_single_view"), help="T0 单视角产物目录（t0:<mesh> 规格用）")
     ap.add_argument("--t0-atlas-res", type=int, default=2048)
     ap.add_argument("--save-renders", action="store_true")
+    ap.add_argument("--ref-view", action="append", default=[],
+                    help="name=N：该条目用 cameras.json 的第 N 个相机/图像作参考视角；"
+                         "缺省时对 supra_*_vN_s* 自动解析 N，否则 0")
+    ap.add_argument("--mra-ref", action="append", default=[],
+                    help="name=path：材质对照用的输入 MRA；缺省时用 inputs/{mesh}_v{view}/mra.png")
     args = ap.parse_args()
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -145,9 +151,30 @@ def main() -> None:
         held_cams = held_cams[:args.max_heldout]
         held_imgs, held_alphas = held_imgs[:args.max_heldout], held_alphas[:args.max_heldout]
 
-    ref_cam = T0.load_cameras(T0.SCENE_DIR / "geometry" / "gt" / "cameras.json")[0]
-    ref_rgbs, _ = T0.load_images([ref_cam], T0.SCENE_DIR / "images", "cuda")
-    ref_img = ref_rgbs[0]
+    all_cams = T0.load_cameras(T0.SCENE_DIR / "geometry" / "gt" / "cameras.json")
+    _ref_img_cache: dict[int, "torch.Tensor"] = {}
+
+    def ref_view_for(name: str) -> int:
+        for spec in args.ref_view:
+            n, v = spec.split("=", 1)
+            if n == name:
+                return int(v)
+        m = re.search(r"supra_\w+_v(\d+)_s\d+", name)
+        return int(m.group(1)) if m else 0
+
+    def ref_pair_for(view: int):
+        if view not in _ref_img_cache:
+            imgs, _ = T0.load_images([all_cams[view]], T0.SCENE_DIR / "images", "cuda")
+            _ref_img_cache[view] = imgs[0]
+        return all_cams[view], _ref_img_cache[view]
+
+    def mra_path_for(name: str, mesh_name: str, view: int) -> Path | None:
+        for spec in args.mra_ref:
+            n, p = spec.split("=", 1)
+            if n == name:
+                return Path(p)
+        cand = OUT / "inputs" / f"{mesh_name}_v{view}" / "mra.png"
+        return cand if cand.is_file() else None
 
     import lpips
     lp_model = lpips.LPIPS(net="alex").cuda().eval()
@@ -168,7 +195,8 @@ def main() -> None:
         else:
             name, glb_path = spec.split("=", 1)
             mesh_name = "proxy" if "proxy" in name else "vggt"
-            meta = json.loads((OUT / "inputs" / f"{mesh_name}_v0" / "meta.json").read_text())
+            ref_view = ref_view_for(name)
+            meta = json.loads((OUT / "inputs" / f"{mesh_name}_v{ref_view}" / "meta.json").read_text())
 
             verts, faces, uvs, tex, mr, gmeta = load_glb(Path(glb_path))
             if tex is None:
@@ -182,6 +210,8 @@ def main() -> None:
             uvs = np.stack([uvs[:, 0], 1.0 - uvs[:, 1]], axis=1).astype(np.float32)
             uv_faces = faces
             uv_verts = verts_w
+        ref_view = ref_view_for(name)
+        ref_cam, ref_img = ref_pair_for(ref_view)
         uv_attr = torch.from_numpy(uvs).cuda().float()[None]
         faces_uv_t = torch.from_numpy(uv_faces).cuda().int()
         chart_vert, n_chart = T0.vertex_charts(len(uvs), uv_faces)
@@ -296,6 +326,18 @@ def main() -> None:
 
         # ---- 材质轴 ----
         mat = dict(gmeta)
+        mra_path = mra_path_for(name, mesh_name, ref_view)
+        if mra_path is not None:
+            from PIL import Image
+            mra_in = np.asarray(Image.open(mra_path).convert("RGB"), np.float32) / 255.0
+            # 输入 MRA 布局与 tex_t1_build_inputs.py 一致：R=metallic，G=roughness，B=alpha 覆盖
+            mat["mra_input_path"] = str(mra_path)
+            mat["mra_input_metallic_mean"] = round(float(mra_in[..., 0].mean()), 4)
+            mat["mra_input_metallic_std"] = round(float(mra_in[..., 0].std()), 4)
+            mat["mra_input_roughness_mean"] = round(float(mra_in[..., 1].mean()), 4)
+            mat["mra_input_roughness_std"] = round(float(mra_in[..., 1].std()), 4)
+            mat["mra_domain_note"] = ("输入统计在条件图像域（全图），预测统计在烘焙可见 texel 域；"
+                                      "两者只有分布层面的可比性，不作逐像素比较")
         if mr is not None:
             resized_mr = resize_rgb(mr, res)
             mrr = resized_mr[baked["rows"].cpu().numpy(), baked["cols"].cpu().numpy()]
@@ -304,6 +346,11 @@ def main() -> None:
             # glTF 标准：R 未用、G=roughness、B=metallic
             mat["metallic_mean"] = round(float(mrr[:, 2].mean()), 4)
             mat["metallic_std"] = round(float(mrr[:, 2].std()), 4)
+            if mra_path is not None:
+                mat["roughness_pred_minus_input"] = round(
+                    mat["roughness_mean"] - mat["mra_input_roughness_mean"], 4)
+                mat["metallic_pred_minus_input"] = round(
+                    mat["metallic_mean"] - mat["mra_input_metallic_mean"], 4)
 
         T, K, W, H = ref_cam["T"], ref_cam["K"], ref_cam["W"], ref_cam["H"]
         clip, camz = T0.build_clip(uv_verts, T, K, W, H)
@@ -335,7 +382,7 @@ def main() -> None:
             "bake_stats": baked["stats"],
             "aggregate": agg, "per_view": per_view, "seam": seam,
             "cross_view_consistency": cons, "material": mat,
-            "reference_view": 0,
+            "reference_view": ref_view,
         }
         summary[name] = rec
         (out_dir / f"{name}.json").write_text(json.dumps(rec, indent=2, ensure_ascii=False))
